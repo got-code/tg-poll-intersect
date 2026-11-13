@@ -19,13 +19,13 @@ const compiled = await build({
       export const auth = {
         sendCode: async () => ({phoneCodeHash:'fake-code-hash', type:'app'}),
         signIn: async () => ({displayName:'Test'}),
-        password: async () => ({displayName:'Test'}),
+        qr: (...args) => hooks.qr(...args),
+        password: (...args) => hooks.password(...args),
         me: async () => ({displayName:'Test'}),
         logout: async () => { hooks.logouts++; },
       };
       export const explainError = error => error.message;
       export const fetchPolls = (...args) => hooks.fetchPolls(...args);
-      export const makeCrypto = () => { throw new Error('Unexpected diagnostics'); };
     `, loader:'js' }));
   } }],
 });
@@ -39,17 +39,32 @@ class Node {
   replaceChildren(...items) { this.children = items; }
   setAttribute(key, value) { this.attributes[key] = value; }
   removeAttribute(key) { delete this.attributes[key]; }
+  set src(value) { this.attributes.src = value; }
+  get src() { return this.attributes.src; }
   focus() {}
   showModal() { this.open = true; }
   close() { this.open = false; this.emit('close'); }
 }
 function app(values = new Map(), options = {}) {
   const nodes = new Map();
+  const timers = new Map();
+  let timerId = 0;
   for (const match of html.matchAll(/<([a-z][a-z0-9]*)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
     const node = new Node(match[1]); node.hidden = /\bhidden\b/.test(match[2]); node.disabled = /\bdisabled\b/.test(match[2]); node.value = match[2].match(/\bvalue="([^"]*)"/)?.[1] ?? ''; nodes.set(match[3], node);
   }
   const hooks = {
-    logouts:0, destroyed:0, imports:[], requests:[],
+    logouts:0, destroyed:0, imports:[], requests:[], qrAttempts:[], passwords:[],
+    qr(client, callbacks) {
+      return new Promise((resolve, reject) => {
+        hooks.qrAttempts.push({ callbacks, resolve, reject });
+        if (!options.ignoreQrAbort) callbacks.abortSignal.addEventListener('abort', () => reject(callbacks.abortSignal.reason), {once:true});
+      });
+    },
+    async password(client, password) {
+      hooks.passwords.push(password);
+      if (password !== 'correct 2FA') throw new Error('Incorrect two-step verification password.');
+      return {displayName:'Test'};
+    },
     async fetchPolls(client, links) {
       hooks.requests.push(links);
       if (!options.pollData) throw new Error('Unexpected poll request');
@@ -63,7 +78,9 @@ function app(values = new Map(), options = {}) {
     }; },
   };
   runInNewContext(compiled.outputFiles[0].text, {
-    hooks, crypto:webcrypto, TextEncoder, TextDecoder, Uint8Array, WebAssembly, URL, Blob, setTimeout, atob, btoa,
+    hooks, crypto:webcrypto, TextEncoder, TextDecoder, Uint8Array, WebAssembly, URL, Blob, AbortController, atob, btoa,
+    setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, {fn, delay}); return id; },
+    clearTimeout: id => timers.delete(id),
     localStorage: {
       getItem: key => values.get(key) ?? null,
       setItem: (key, value) => { if (options.denyWrites) throw new Error('denied'); values.set(key, value); },
@@ -72,10 +89,15 @@ function app(values = new Map(), options = {}) {
     document: { getElementById:id => { assert.ok(nodes.has(id), `Missing DOM element: ${id}`); return nodes.get(id); }, createElement:tag => new Node(tag), createTextNode:text => ({textContent:text}), body:new Node('body') },
   });
   const $ = id => nodes.get(id);
-  return { $, values, hooks,
-    async login(remember = true) {
+  return { $, values, hooks, timers,
+    async prepareLogin(method = 'phone', remember = false) {
       await $('connect').emit('click');
-      $('apiId').value = '12345'; $('apiHash').value = 'abcdef0123456789abcdef0123456789'; $('phone').value = '+381123456789'; $('remember').checked = remember;
+      if (method === 'qr') await $('qrLogin').emit('click');
+      $('apiId').value = '12345'; $('apiHash').value = 'abcdef0123456789abcdef0123456789'; $('remember').checked = remember;
+      $('phone').value = method === 'phone' ? '+381123456789' : '';
+    },
+    async login(remember = true) {
+      await this.prepareLogin('phone', remember);
       await $('loginForm').emit('submit');
       $('code').value = '12345';
       await $('loginForm').emit('submit');
@@ -116,21 +138,151 @@ test('opt-in save, reload, wrong password, unlock and logout', async () => {
   assert.equal(second.$('connect').textContent, 'Sign in to Telegram');
 });
 
+test('QR login needs API keys but no phone, refreshes the image, then uses encrypted save and unlock', async () => {
+  const view = app();
+  await view.prepareLogin('qr', true);
+  const apiId = view.$('apiId'), apiHash = view.$('apiHash');
+  await view.$('phoneLogin').emit('click');
+  assert.equal(view.$('phone').required, true);
+  await view.$('qrLogin').emit('click');
+  assert.equal(view.$('apiId'), apiId);
+  assert.equal(view.$('apiHash'), apiHash);
+  assert.equal(apiId.value, '12345');
+  assert.equal(apiHash.value, 'abcdef0123456789abcdef0123456789');
+  assert.equal(view.$('remember').checked, true);
+  assert.equal(view.$('phoneLabel').hidden, true);
+  assert.equal(view.$('phone').required, false);
+  assert.equal(view.$('phone').disabled, true);
+  assert.equal(view.$('loginSubmit').textContent, 'Show QR code');
+  view.$('apiHash').value = '';
+  await view.$('loginForm').emit('submit');
+  assert.equal(view.hooks.qrAttempts.length, 0);
+  assert.match(view.$('loginStatus').textContent, /API/);
+  view.$('apiHash').value = 'abcdef0123456789abcdef0123456789';
+  const signingIn = view.$('loginForm').emit('submit');
+  const attempt = view.hooks.qrAttempts[0];
+  assert.equal(view.$('loginSubmit').hidden, true);
+  attempt.callbacks.onUrlUpdated('tg://login?token=FIRST_SYNTHETIC_TOKEN', new Date(Date.now() + 30000));
+  const firstImage = view.$('qrCode').src;
+  assert.match(firstImage, /^data:image\/gif;base64,/);
+  assert.equal(view.$('qrCode').hidden, false);
+  assert.equal(view.timers.size, 1);
+  // Expired codes disappear while Telegram is producing a replacement.
+  [...view.timers.values()][0].fn();
+  assert.equal(view.$('qrCode').src, undefined);
+  assert.equal(view.$('qrCode').hidden, true);
+  assert.equal(view.timers.size, 0);
+  attempt.callbacks.onUrlUpdated('tg://login?token=SECOND_SYNTHETIC_TOKEN', new Date(Date.now() + 30000));
+  assert.notEqual(view.$('qrCode').src, firstImage);
+  attempt.callbacks.onQrScanned();
+  assert.equal(view.$('qrCode').src, undefined);
+  assert.equal(view.timers.size, 0);
+  attempt.resolve({displayName:'QR Test'});
+  await signingIn;
+  assert.equal(view.$('saveFields').hidden, false);
+  assert.equal(view.$('qrFields').hidden, true);
+  await view.save();
+  const saved = view.values.get(SESSION_KEY);
+  for (const secret of ['SYNTHETIC_LOGIN_SESSION_SECRET', 'SYNTHETIC_TOKEN', 'tg://login', 'abcdef0123456789abcdef0123456789']) assert.ok(!saved.includes(secret));
+  const reloaded = app(view.values);
+  await reloaded.$('connect').emit('click');
+  assert.equal(reloaded.$('loginMethods').hidden, true);
+  reloaded.$('unlockPassword').value = 'Test1234';
+  await reloaded.$('loginForm').emit('submit');
+  assert.deepEqual(reloaded.hooks.imports, ['SYNTHETIC_LOGIN_SESSION_SECRET']);
+  assert.equal(reloaded.$('login').open, false);
+});
+
+test('QR 2FA uses the same pending client and allows retrying an incorrect password', async () => {
+  const view = app();
+  await view.prepareLogin('qr');
+  const signingIn = view.$('loginForm').emit('submit');
+  view.hooks.qrAttempts[0].reject(new Error('SESSION_PASSWORD_NEEDED'));
+  await signingIn;
+  assert.equal(view.$('passwordLabel').hidden, false);
+  assert.equal(view.$('qrFields').hidden, true);
+  assert.equal(view.$('apiHash').value, '');
+  assert.equal(view.hooks.destroyed, 0);
+  view.$('password').value = 'incorrect';
+  await view.$('loginForm').emit('submit');
+  assert.match(view.$('loginStatus').textContent, /Incorrect/);
+  assert.equal(view.$('password').value, '');
+  view.$('password').value = 'correct 2FA';
+  await view.$('loginForm').emit('submit');
+  assert.deepEqual(view.hooks.passwords, ['incorrect', 'correct 2FA']);
+  assert.equal(view.$('login').open, false);
+  assert.equal(view.$('disconnect').hidden, false);
+  assert.equal(view.values.has(SESSION_KEY), false);
+});
+
+test('switching from QR to phone or closing aborts the attempt and ignores late QR results', async () => {
+  for (const action of ['phoneLogin', 'cancelLogin']) {
+    const view = app(new Map(), {ignoreQrAbort:true});
+    await view.prepareLogin('qr');
+    const signingIn = view.$('loginForm').emit('submit');
+    const attempt = view.hooks.qrAttempts[0];
+    attempt.callbacks.onUrlUpdated('tg://login?token=OLD', new Date(Date.now() + 30000));
+    await view.$(action).emit('click');
+    assert.equal(attempt.callbacks.abortSignal.aborted, true);
+    assert.equal(view.hooks.destroyed, 1);
+    assert.equal(view.$('qrCode').src, undefined);
+    assert.equal(view.timers.size, 0);
+    if (action === 'cancelLogin') await view.$('connect').emit('click');
+    const heading = view.$('loginHeading').textContent;
+    attempt.callbacks.onUrlUpdated('tg://login?token=LATE', new Date(Date.now() + 30000));
+    attempt.callbacks.onQrScanned();
+    attempt.resolve({displayName:'Late user'});
+    await signingIn;
+    assert.equal(view.$('qrCode').src, undefined);
+    assert.equal(view.$('loginHeading').textContent, heading);
+    assert.equal(view.$('loginSubmit').disabled, false);
+    assert.equal(view.$('disconnect').hidden, true);
+    assert.equal(view.values.has(SESSION_KEY), false);
+    if (action === 'phoneLogin') {
+      assert.equal(view.$('phone').required, true);
+      assert.equal(view.$('phone').disabled, false);
+      view.$('phone').value = '+381123456789';
+      await view.$('loginForm').emit('submit');
+      assert.equal(view.$('codeLabel').hidden, false);
+    }
+  }
+});
+
+test('QR network failure clears the code and allows a fresh attempt', async () => {
+  const view = app();
+  await view.prepareLogin('qr');
+  const signingIn = view.$('loginForm').emit('submit');
+  const attempt = view.hooks.qrAttempts[0];
+  attempt.callbacks.onUrlUpdated('tg://login?token=OLD', new Date(Date.now() + 30000));
+  attempt.reject(new Error('Network failed'));
+  await signingIn;
+  assert.match(view.$('loginStatus').textContent, /Network failed/);
+  assert.equal(view.$('credentials').hidden, false);
+  assert.equal(view.$('qrCode').src, undefined);
+  assert.equal(view.$('loginSubmit').disabled, false);
+  assert.equal(view.hooks.destroyed, 1);
+  const retry = view.$('loginForm').emit('submit');
+  assert.equal(view.hooks.qrAttempts.length, 2);
+  await view.$('cancelLogin').emit('click');
+  await retry;
+  assert.equal(view.values.has(SESSION_KEY), false);
+});
+
 test('global topic filter starts at three, rerenders without Telegram, and disables export when no dates qualify', async () => {
   const view = app();
   assert.equal(view.$('topicMinimum').value, '3');
   await view.$('demo').emit('click');
-  assert.equal(view.$('rows').children.length, 2);
+  assert.equal(view.$('rows').children.length, 10);
   assert.equal(view.$('export').disabled, false);
-  view.$('topicMinimum').value = '4';
+  view.$('topicMinimum').value = '11';
   await view.$('topicMinimum').emit('input');
   assert.equal(view.$('rows').children.length, 0);
   assert.equal(view.$('export').disabled, true);
   assert.equal(view.$('empty').hidden, false);
-  assert.match(view.$('empty').children[0].textContent, /at least 4 people/);
+  assert.match(view.$('empty').children[0].textContent, /at least 11 people/);
   view.$('topicMinimum').value = '0';
   await view.$('topicMinimum').emit('input');
-  assert.equal(view.$('rows').children.length, 2);
+  assert.equal(view.$('rows').children.length, 10);
   assert.equal(view.$('export').disabled, false);
   assert.equal(app(view.values).$('topicMinimum').value, '0');
 });
@@ -145,10 +297,12 @@ test('one link submits four inferred polls, persists only manual input, and dete
   const reloaded = app(view.values);
   assert.equal(reloaded.$('link3').value, '');
   assert.equal(reloaded.$('link3').placeholder, 'https://t.me/groupchat/126');
+  assert.equal(reloaded.$('pollLinks').open, false);
   await view.login(false);
   await view.$('pollForm').emit('submit');
   assert.deepEqual(Array.from(view.hooks.requests[0], link => link.messageId), [123, 124, 125, 126]);
   assert.equal(view.$('export').disabled, false);
+  assert.equal(view.$('pollLinks').open, false);
   // A manual value equal to the automatic one still identifies the same polls.
   view.$('link1').value = 'https://telegram.me/GroupChat/124?single';
   await view.$('link1').emit('input');
@@ -161,7 +315,25 @@ test('one link submits four inferred polls, persists only manual input, and dete
   await view.$('clearLinks').emit('click');
   assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)).links, ['', '', '', '']);
   assert.equal(view.$('clearLinks').hidden, true);
+  assert.equal(view.$('pollLinks').open, true);
   assert.equal(app(view.values).$('link0').value, '');
+});
+
+test('failed refreshes preserve the disclosure state; only a successful refresh collapses it', async () => {
+  const options = {pollData:demo()};
+  const view = app(new Map(), options);
+  view.$('link0').value = 'https://t.me/groupchat/123';
+  await view.$('link0').emit('input');
+  await view.login(false);
+  await view.$('pollForm').emit('submit');
+  assert.equal(view.$('pollLinks').open, false);
+  delete options.pollData;
+  for (const open of [true, false]) {
+    view.$('pollLinks').open = open;
+    await view.$('pollForm').emit('submit');
+    assert.equal(view.$('pollLinks').open, open);
+    assert.match(view.$('status').textContent, /Unexpected poll request/);
+  }
 });
 
 test('manual overrides restart suggestions; duplicate polls are rejected before login', async () => {

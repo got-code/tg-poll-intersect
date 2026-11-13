@@ -1,63 +1,42 @@
 # Poll Intersections
 
-A browser app for comparing four Telegram group polls: topic, date, time and place. No application backend, analytics or runtime CDN. The build is a self-contained `dist/index.html`, including Telegram’s client library, WASM and dependency licenses.
+Compare four Telegram group polls: topic, date, time and place. The build is a self-contained `dist/index.html` with no application backend, analytics or runtime CDN.
 
 ## Use
 
-Open the site and try **Demo**, or paste your poll links and select **Refresh results**. If the messages are consecutive, enter only the topic link: empty fields use the next message after the preceding poll. A manual link starts a new sequence. **Clear links** appears when two or more fields are filled manually.
+Use non-anonymous polls in a group your account can access. Enter your [Telegram API keys](https://my.telegram.org/apps) once, then choose phone or QR sign-in. QR requires another device already signed in to Telegram; either method may require your 2FA password.
 
-Use non-anonymous polls in a group your account can access. Obtain your own API ID and API hash from [Telegram](https://my.telegram.org/apps), then sign in through the app. Telegram may require you to vote first and [does not expose channel voter lists](https://core.telegram.org/method/messages.getPollVotes). Some specialized sign-in methods are unsupported.
+Paste the poll links and select **Refresh results**, or try **Demo** with ten dates, topics and people and three times and places. For consecutive messages, enter only the first link; a manual link starts a new sequence. Results are grouped by date. An unanswered poll assumes all its options; an explicit vote never assumes other options. Dashed names mark implicit votes for that row. Every name shows all four vote times in your local time zone, missing votes first, then its Telegram ID. **Minimum people per topic** filters topics and dates; zero shows all. CSV exports the visible results without Telegram IDs.
 
-Results are grouped by date. An unanswered poll assumes all its options; a vote for another option never does. Dashed names explain missing votes first, followed by explicit votes. Counts distinguish explicit and implicit participants. **Minimum people per topic** filters topics and dates; zero shows all. CSV exports the visible results, names and separate counts without Telegram IDs.
+Saved, valid links start collapsed; use **Edit** to change them. The fields collapse after a successful refresh and reopen for link validation errors. **Refresh results** and **Demo** remain available while collapsed.
 
-## Publish on GitHub Pages
+Topics are ranked by total participants, then by explicit participants; complete ties keep poll order.
 
-1. Create a GitHub repository, such as `poll-intersections`, with `main` as its default branch. A public repository works with GitHub Free.
-2. Commit and push the project, including `.github/workflows/pages.yml`, `src`, `test`, `build.mjs`, `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`. Keep `.gitignore`; generated files and dependencies are not committed. Do not upload credentials, sessions or exported results.
-3. Open **Settings → Pages → Build and deployment → Source**, and select **GitHub Actions**.
-4. Open **Actions → Check and publish → Run workflow** on `main`, or push another commit. The workflow installs locked dependencies, builds, tests and publishes `dist` only after checks pass. Pull requests run checks without publishing.
-5. Open the URL shown under **Settings → Pages**, usually `https://YOUR-USERNAME.github.io/poll-intersections/`. Open that same HTTPS URL in your phone’s browser; you can bookmark it or add it to your home screen.
+Telegram may require you to vote first and does not expose channel voter lists. Polls can change while results are loading.
 
-The app works under a repository subpath without a base URL setting. No Telegram secrets or application environment variables are needed in GitHub Actions. Sign in separately on each device; browser storage does not sync. You can also open the built HTML locally, although mobile file handlers vary; HTTPS is the intended mobile entry point.
+## Data
 
-See GitHub’s instructions for [publishing sources](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site) and [custom workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages). A local build verifies the artifact; deployment is verified only after the GitHub workflow succeeds.
+Links and the topic minimum are saved in this browser. **Remember login** encrypts the session and API keys with a separate password. Passwords, login codes and encryption keys are never persisted. Votes and QR tokens stay in memory; reload clears results and locks the saved login. Data does not sync between browsers or devices.
 
-## Storage and privacy
-
-- `poll-intersections.preferences.v1` stores manual links and the topic minimum in localStorage. Automatic links are derived, not saved as manual values.
-- **Remember login** stores an encrypted session and API keys under `poll-intersections.session.v1`: AES-256-GCM, a random 12-byte IV, PBKDF2-SHA256 with 600,000 iterations and a random 16-byte salt. Passwords, Telegram codes and derived keys are not persisted. The SDK uses memory storage after unlocking.
-- Votes stay in memory until you export CSV. Reloading clears results and locks the saved login. **Sign out** removes it and attempts server logout. Closing a tab does not revoke the Telegram session; manage sessions in **Telegram → Settings → Devices**.
-- Browser storage is scoped to the site and browser profile. Disabled or full storage prevents persistence. Encryption protects the stored copy; an unlocked page has access to the session, which has account permissions rather than a read-only scope.
-- Connections go directly to Telegram. Private links may require reading your dialog list. No messages are sent and no votes are cast. The CSP allows only the bundled script and Telegram WebSocket endpoints. Dependencies and licenses are embedded; this app has not been independently audited.
-
-To move links from an older build without migration code: open its DevTools → **Application → Local Storage**, copy the four-link JSON array, then open the new site’s storage. Create `poll-intersections.preferences.v1` with `{"links":COPIED_ARRAY,"topicMinimum":3}` (replace `COPIED_ARRAY` with the actual array) and reload. You can instead paste the links into the form. Sign in again on the new build; old encrypted logins are not migrated.
+**Sign out** removes the saved login and attempts server logout. Closing a tab does not revoke the session; manage it in **Telegram → Settings → Devices**. Sessions have full account permissions. Encryption protects the stored copy, not an unlocked page. The app connects directly to Telegram, never votes or sends messages, and may read your chat list to resolve private links.
 
 ## Develop
 
-Use Node.js 24 and the pnpm version declared in `package.json`:
+Use Node.js 24 and the pnpm version in `package.json`:
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
+pnpm exec playwright install --with-deps chromium
 pnpm check
 ```
 
-To preview over HTTP, run `python3 -m http.server 8080 --directory dist` and open `http://localhost:8080/`. Also check the page beneath a subpath before publication.
-
-- `src/domain/`: pure link handling, grouping, filtering and CSV.
-- `src/infrastructure/`: Telegram access, voter pagination and persistence.
-- `src/ui/`: form, authentication, rendering and browser interactions.
-- `src/main.mjs`: entry point; `src/index.html` and `src/styles.css`: layout and styles.
-- `test/`: domain, rendering, persistence, authentication and bundled SDK checks.
-
-Tests use synthetic Telegram responses and sessions. UI checks should cover narrow screens, both color schemes, keyboard/touch tooltips and reload persistence. Real account login and poll access require a separate manual check. Telegram provides no atomic snapshot across polls; vote changes that preserve counts can escape consistency checks.
-
-For sign-in diagnostics, open DevTools → **Console**, enable **Info** messages and filter by `[Telegram`. Authentication RPCs log the method, response constructor, code delivery/next delivery, timeout and recognized errors. Request parameters, phone numbers, API credentials, codes, code hashes, passwords, sessions and response bodies are excluded. These diagnostics do not confirm actual code delivery. Reload the rebuilt page before reproducing an issue.
+`pnpm check` builds the app and runs the Node.js and Chromium tests using synthetic Telegram responses. Browser tests cover mobile and desktop widths in both themes. To use an installed Chromium, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. Auth RPC diagnostics appear in the console under `[Telegram`; secrets and response bodies are excluded.
 
 ### Development rules
 
 - Agree on a plan before implementation. Keep product copy English and branding neutral.
-- Follow established software engineering, web accessibility and security standards. Keep domain logic independent of browser and network APIs; use small cohesive modules and proportionate abstractions.
-- Preserve the documented privacy and storage contracts. Keep dependencies locked and preserve bundled license notices.
-- Test behavior and failure boundaries affected by a change. Run `pnpm check`; inspect UI changes in a browser at mobile and desktop widths, in both color schemes. State what was actually verified.
-- Keep documentation minimal and operational; do not duplicate implementation logic or restate industry standards. Prefer documented manual steps to one-off migration code.
-- Record durable development requirements here, including this requirement to maintain the rules. Update affected instructions with the same change. Reserve `AGENTS.md` for agent-specific instructions; requirements shared by human and automated contributors belong here and must not be duplicated there.
+- Keep domain logic independent of browser and network APIs; use small cohesive modules.
+- Preserve the privacy and storage contracts, locked dependencies and bundled license notices.
+- Keep every necessary test in the repository as automated code; remove temporary scripts. Run `pnpm check`, including browser assertions for mobile, desktop and both color schemes. State what was verified.
+- Keep documentation brief and operational; avoid duplicating implementation details or platform documentation.
+- Maintain these rules when requirements change. Put shared requirements here and agent-only instructions in `AGENTS.md`.

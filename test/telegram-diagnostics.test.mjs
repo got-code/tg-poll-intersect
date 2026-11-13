@@ -60,3 +60,21 @@ test('poll data is not logged and console failures cannot prevent authentication
   const response = { _: 'auth.sentCode' };
   assert.equal(await brokenConsole({ _: 'auth.sendCode' }, async () => response), response);
 });
+
+test('QR diagnostics log token constructors and known errors, never the tokens or API keys', async () => {
+  const entries = [];
+  const trace = createTelegramDiagnostics((...args) => entries.push(args));
+  for (const method of ['auth.exportLoginToken', 'auth.importLoginToken']) {
+    const request = {_:method, apiId:987654, apiHash:'SECRET_HASH', token:'SECRET_TOKEN'};
+    for (const result of ['auth.loginToken', 'auth.loginTokenMigrateTo', 'auth.loginTokenSuccess']) {
+      const response = {_:result, token:'SECRET_TOKEN', authorization:{user:{firstName:'SECRET_NAME'}}};
+      assert.equal(await trace(request, async () => response), response);
+      assert.equal(JSON.parse(entries.at(-1)[1]).result, result);
+    }
+    const error = {text:'AUTH_TOKEN_EXPIRED', code:400};
+    await assert.rejects(trace(request, async () => { throw error; }), value => value === error);
+    assert.equal(JSON.parse(entries.at(-1)[1]).error, 'AUTH_TOKEN_EXPIRED');
+  }
+  assert.ok(!JSON.stringify(entries).includes('SECRET'));
+  assert.ok(!JSON.stringify(entries).includes('987654'));
+});

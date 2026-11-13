@@ -6,7 +6,11 @@ export function groupByDate(polls) {
   const allVoters = [...new Set(polls.flatMap(poll => poll.options.flatMap(option => option.voters.map(String))))];
   const votersByPoll = polls.map(poll => new Set(poll.options.flatMap(option => option.voters.map(String))));
   const votesByPerson = Object.fromEntries(allVoters.map(id => [id,
-    POLL_LABELS.filter((_, index) => votersByPoll[index].has(id)),
+    polls.map((poll, index) => ({
+      label: POLL_LABELS[index],
+      voted: votersByPoll[index].has(id),
+      at: votersByPoll[index].has(id) ? poll.votedAt?.[id] ?? null : null,
+    })),
   ]));
   const dateVoters = votersByPoll[1];
   const implicitDateIds = allVoters.filter(id => !dateVoters.has(id));
@@ -36,7 +40,7 @@ export function groupByDate(polls) {
         return { text: option.text, explicitIds, implicitIds, ids: [...explicitIds, ...implicitIds] };
       }),
     }));
-    groupedSections[0].options.sort((a, b) => b.ids.length - a.ids.length);
+    groupedSections[0].options.sort((a, b) => b.ids.length - a.ids.length || b.explicitIds.length - a.explicitIds.length);
     const bestTopic = groupedSections[0].options[0];
     return {
       date: date.text, ids, explicitIds, implicitIds: [...implicitDateIds],

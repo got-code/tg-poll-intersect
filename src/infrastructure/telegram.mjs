@@ -1,6 +1,6 @@
 import { UserFacingError } from '../domain/errors.mjs';
 import { BaseTelegramClient, MemoryStorage, WebCryptoProvider, WebPlatform, MtPeerNotFoundError } from '@mtcute/web';
-import { sendCode, signIn, checkPassword, getMe, getMessages, resolvePeer, iterDialogs, logOut } from '@mtcute/web/methods.js';
+import { sendCode, signIn, signInQr, checkPassword, getMe, getMessages, resolvePeer, iterDialogs, logOut } from '@mtcute/web/methods.js';
 import { readVoters } from './voters.mjs';
 import { createTelegramDiagnostics } from './telegram-diagnostics.mjs';
 
@@ -23,14 +23,15 @@ class LocalPlatform extends WebPlatform {
   getDefaultLogLevel() { return 0; }
 }
 
-export function createClient(apiId, apiHash) {
+export function createClient(apiId, apiHash, { qrLogin = false } = {}) {
   return new Client({
     apiId, apiHash,
     storage: new MemoryStorage(),
     platform: new LocalPlatform(),
     crypto: makeCrypto(),
     logLevel: 0,
-    disableUpdates: true,
+    // QR authorization needs updateLoginToken; keep chat update processing off.
+    disableUpdates: !qrLogin,
     updates: false,
     initConnectionOptions: { deviceModel: 'Poll Intersections', appVersion: '0.2', systemVersion: 'Browser' },
   });
@@ -39,6 +40,7 @@ export function createClient(apiId, apiHash) {
 export const auth = {
   sendCode: (client, phone) => sendCode(client, { phone }),
   signIn: (client, phone, phoneCodeHash, phoneCode) => signIn(client, { phone, phoneCodeHash, phoneCode }),
+  qr: (client, options) => signInQr(client, options),
   password: (client, password) => checkPassword(client, password),
   logout: client => logOut(client),
   me: client => getMe(client),
@@ -72,7 +74,7 @@ export async function fetchPolls(client, links, progress) {
     const poll = message?.media;
     if (poll?.type !== 'poll') throw new UserFacingError(`Link ${i + 1}: the message does not contain a poll.`);
     if (!poll.isPublic) throw new UserFacingError(`Poll ${i + 1} is anonymous. Voter intersections are unavailable.`);
-    const options = [];
+    const options = [], votedAt = {};
     for (const answer of poll.answers) {
       const voters = await readVoters(async offset => {
         const page = await client.call({ _: 'messages.getPollVotes', peer, id: messageId, option: answer.data, offset, limit: 100 });
@@ -82,19 +84,21 @@ export async function fetchPolls(client, links, progress) {
           const p = vote.peer;
           if (p._ === 'peerUser') {
             const user = users.get(String(p.userId));
-            return { id: `user:${p.userId}`, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.username || 'Unnamed participant' };
+            return { id: `user:${p.userId}`, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ') || user?.username || 'Unnamed participant', votedAt: vote.date };
           }
           const chatId = p.channelId ?? p.chatId;
           const chat = chats.get(String(chatId));
-          return { id: `${p._}:${chatId}`, name: chat?.title || 'Unnamed chat' };
+          return { id: `${p._}:${chatId}`, name: chat?.title || 'Unnamed chat', votedAt: vote.date };
         });
         return { people, count: page.count, nextOffset: page.nextOffset };
       }, answer.result?.voters);
       Object.assign(names, voters.names);
+      // Multiple choices can repeat a peer; retain the latest reported vote time.
+      for (const [id, time] of Object.entries(voters.votedAt)) votedAt[id] = Math.max(votedAt[id] ?? 0, time);
       options.push({ text: answer.text, voters: voters.ids });
     }
     checks.push({ peer, messageId, fingerprint: fingerprint(poll) });
-    polls.push({ title: poll.question, options });
+    polls.push({ title: poll.question, options, votedAt });
   }
   progress('Checking result completeness…');
   for (const check of checks) {
@@ -116,6 +120,8 @@ export function explainError(error) {
     ['PHONE_NUMBER_INVALID', 'Check the phone number, including the country code.'],
     ['PHONE_CODE_INVALID', 'Incorrect code. Check the code from Telegram.'],
     ['PHONE_CODE_EXPIRED', 'The code expired. Close the dialog and start signing in again.'],
+    ['AUTH_TOKEN_EXPIRED', 'The QR code expired. Show a new QR code and scan it again.'],
+    ['AUTH_TOKEN_INVALID', 'The QR code is no longer valid. Show a new QR code and scan it again.'],
     ['PASSWORD_HASH_INVALID', 'Incorrect two-step verification password.'],
     ['AUTH_RESTART', 'Telegram requires a fresh login. Close the dialog and try again.'],
     ['SESSION_REVOKED', 'The session was revoked. Sign out and sign in again.'],

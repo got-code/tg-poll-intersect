@@ -3,7 +3,7 @@ import { UserFacingError } from '../domain/errors.mjs';
 // A changing count or repeated cursor means the snapshot cannot be trusted.
 export async function readVoters(fetchPage, expected) {
   const ids = new Set();
-  const names = {};
+  const names = {}, votedAt = {};
   const offsets = new Set();
   let offset = '', count;
   for (let pageNumber = 0; pageNumber < 1000; pageNumber++) {
@@ -14,13 +14,16 @@ export async function readVoters(fetchPage, expected) {
     for (const person of page.people) {
       ids.add(String(person.id));
       names[String(person.id)] = person.name;
+      if (Number.isInteger(person.votedAt) && person.votedAt > 0 && person.votedAt <= 8640000000000) {
+        votedAt[String(person.id)] = Math.max(votedAt[String(person.id)] ?? 0, person.votedAt);
+      }
     }
     const next = page.nextOffset;
     if (!next) {
       if (ids.size !== count || (expected != null && expected !== count)) {
         throw new UserFacingError('The voter list is incomplete or votes changed. Refresh the results again.');
       }
-      return { ids: [...ids], names };
+      return { ids: [...ids], names, votedAt };
     }
     if (offsets.has(next)) throw new UserFacingError('Telegram repeated a voter page. Try refreshing later.');
     offsets.add(next);

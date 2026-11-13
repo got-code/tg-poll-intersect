@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { groupByDate, filterTopics } from '../src/domain/polls.mjs';
 import { parseLink } from '../src/domain/links.mjs';
 import { readVoters } from '../src/infrastructure/voters.mjs';
-import { demo } from '../src/demo.mjs';
+import { samplePolls } from './fixtures/polls.mjs';
 import { csv } from '../src/domain/csv.mjs';
 
 test('each date lists its own voters and independent topic, time and place intersections', () => {
-  const data = demo();
+  const data = samplePolls();
   const groups = groupByDate(data.polls);
   assert.deepEqual(groups.map(group => group.date), ['14 November', '15 November']);
   assert.deepEqual(groups[0].ids, ['1','2','3','4']);
@@ -32,8 +32,32 @@ test('each date lists its own voters and independent topic, time and place inter
   }
 });
 
+test('topics with equal totals prefer explicit votes and preserve poll order for complete ties', () => {
+  const polls = [
+    { options: [
+      { text: '3+2', voters: ['1','2','3','5','6'] },
+      { text: '4+1', voters: ['1','2','3','4','5'] },
+      { text: 'Another 4+1', voters: ['1','2','3','4','6'] },
+    ] },
+    { options: [{ text: 'Date', voters: ['1','2','3','4'] }] },
+    { options: [{ text: 'Time', voters: [] }] },
+    { options: [{ text: 'Place', voters: [] }] },
+  ];
+  const [group] = groupByDate(polls);
+  assert.deepEqual(group.sections[0].options.map(option => option.text), ['4+1', 'Another 4+1', '3+2']);
+  assert.equal(group.bestTopicCount, 5);
+  assert.equal(group.bestTopicExplicitCount, 4);
+  assert.equal(group.bestTopicImplicitCount, 1);
+
+  polls[0].options.push({ text: '3+3', voters: ['1','2','3','5','6','7'] });
+  const [larger] = groupByDate(polls);
+  assert.equal(larger.sections[0].options[0].text, '3+3');
+  assert.equal(larger.bestTopicCount, 6);
+  assert.equal(larger.bestTopicExplicitCount, 3);
+});
+
 test('minimum applies only to topics and hides dates with no qualifying topic without altering day totals', () => {
-  const groups = groupByDate(demo().polls);
+  const groups = groupByDate(samplePolls().polls);
   const filtered = filterTopics(groups);
   assert.equal(filtered.length, 2);
   for (const group of filtered) {
@@ -156,6 +180,25 @@ test('fetches every voter page, including a complete empty option', async () => 
   assert.deepEqual(result.ids, ['1','2','3']);
   assert.equal(result.names['1'], result.names['2']);
   assert.deepEqual((await readVoters(async () => ({count: 0, people: []}), 0)).ids, []);
+});
+
+test('pagination retains the latest vote time and distinguishes missing metadata from missing votes', async () => {
+  const start = Date.UTC(2026, 10, 12, 12) / 1000;
+  const result = await readVoters(async offset => offset
+    ? {count:3, people:[{id:2, name:'Second', votedAt:start + 60}, {id:3, name:'Third', votedAt:Infinity}]}
+    : {count:3, people:[{id:1, name:'First', votedAt:start}, {id:2, name:'Second', votedAt:start}], nextOffset:'next'}, 3);
+  assert.deepEqual(result.ids, ['1','2','3']);
+  assert.deepEqual(result.votedAt, {'1':start, '2':start + 60});
+  const polls = Array.from({length:4}, (_, index) => ({
+    options:[{text:'Option', voters:index === 0 ? ['1','2','3'] : ['1']}],
+    votedAt:index === 0 ? result.votedAt : {'1':start},
+  }));
+  const [group] = groupByDate(polls);
+  assert.deepEqual(group.votesByPerson['3'], [
+    {label:'Topic', voted:true, at:null}, {label:'Date', voted:false, at:null},
+    {label:'Time', voted:false, at:null}, {label:'Place', voted:false, at:null},
+  ]);
+  assert.equal(group.votesByPerson['2'][0].at, start + 60);
 });
 
 test('rejects missing pages, repeated cursors and changing totals', async () => {

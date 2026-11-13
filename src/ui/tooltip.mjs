@@ -1,17 +1,23 @@
 import { element } from './dom.mjs';
 
 export function createTooltip() {
-  let tooltip, activeTarget;
+  let tooltip, activeTarget, hideTimer;
   function hide() {
+    clearTimeout(hideTimer);
     if (tooltip) tooltip.hidden = true;
     activeTarget?.removeAttribute('aria-describedby');
     activeTarget = null;
+  }
+  function leave() {
+    if (document.activeElement !== activeTarget) hideTimer = setTimeout(hide, 200);
   }
   function show(button, text) {
     if (!tooltip) {
       tooltip = element('div', 'person-tooltip');
       tooltip.id = 'personTooltip';
       tooltip.setAttribute('role', 'tooltip');
+      tooltip.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+      tooltip.addEventListener('mouseleave', leave);
       document.body.append(tooltip);
       document.addEventListener('pointerdown', event => {
         if (event.target !== activeTarget && event.target !== tooltip) hide();
@@ -34,7 +40,7 @@ export function createTooltip() {
   }
   function bind(button, text) {
     button.addEventListener('mouseenter', () => show(button, text));
-    button.addEventListener('mouseleave', hide);
+    button.addEventListener('mouseleave', leave);
     // Focus can scroll the page. Show after that scroll so it does not dismiss
     // a tooltip before a keyboard user can read it.
     button.addEventListener('focus', () => requestAnimationFrame(() => {

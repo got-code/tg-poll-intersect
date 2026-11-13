@@ -1,34 +1,37 @@
-import { POLL_LABELS } from '../domain/links.mjs';
 import { element } from './dom.mjs';
 import { createTooltip } from './tooltip.mjs';
 
-function participantExplanation(id, explicitPolls, context) {
-  const missing = POLL_LABELS.filter(label => !explicitPolls.includes(label));
-  const assumed = context.filter(label => missing.includes(label));
-  const other = missing.filter(label => !context.includes(label));
+function participantExplanation(id, votes, formatTime) {
+  const time = at => {
+    const date = typeof at === 'number' && at > 0 ? new Date(at * 1000) : null;
+    return date && Number.isFinite(date.getTime()) ? formatTime.format(date) : 'time unavailable';
+  };
   return [
-    `Implicit here: ${assumed.join(', ')} — no vote; all options assumed.`,
-    other.length ? `Other implicit polls: ${other.join(', ')} — no vote.` : '',
-    `Explicit votes: ${explicitPolls.join(', ') || 'none'}.`,
+    ...[...votes.filter(vote => !vote.voted), ...votes.filter(vote => vote.voted)]
+      .map(vote => `${vote.label} — ${vote.voted ? time(vote.at) : 'no vote'}`),
     `Telegram ID: ${String(id).split(':').at(-1)}`,
-  ].filter(Boolean).join('\n');
+  ].join('\n');
 }
 
 export function createResultsRenderer(container) {
   const tooltip = createTooltip();
+  const formatTime = new Intl.DateTimeFormat('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
 
-  function countNode(explicit, implicit, className, prefix = '', context = ['Date']) {
-    const count = element(implicit ? 'button' : 'span', className, prefix + explicit + (implicit ? `(+${implicit}?)` : ''));
-    if (implicit) {
+  function countNode(explicit, implicit, className, prefix = '', context = ['Date'], description = '') {
+    const count = element(implicit || description ? 'button' : 'span', className, prefix + explicit + (implicit ? `(+${implicit}?)` : ''));
+    if (implicit || description) {
       count.type = 'button';
-      const explanation = `Explicit: ${explicit}. Implicit: ${implicit} — no vote in ${context.join(' or ')}. An unanswered poll assumes all its options. Total: ${explicit + implicit}.`;
+      const explanation = [description,
+        implicit ? `${implicit} ${implicit === 1 ? 'person has' : 'people have'} no vote in ${context.join(' or ')}.` : '',
+        `Total: ${explicit + implicit}`,
+      ].filter(Boolean).join('\n');
       count.setAttribute('aria-label', prefix + explanation);
       tooltip.bind(count, explanation);
     }
     return count;
   }
 
-  function people(ids, names, implicitIds, votesByPerson, context) {
+  function people(ids, names, implicitIds, votesByPerson) {
     if (!ids.length) return element('span', 'no-people', 'No participants');
     const implicit = new Set(implicitIds);
     const list = element('ul', 'people-list');
@@ -37,10 +40,7 @@ export function createResultsRenderer(container) {
       const name = names[id] || 'Unnamed participant';
       const button = element('button', implicit.has(id) ? 'person implicit' : 'person', name);
       button.type = 'button';
-      const explanation = implicit.has(id)
-        ? participantExplanation(id, votesByPerson[id], context)
-        : 'Telegram ID: ' + String(id).split(':').at(-1);
-      if (implicit.has(id)) button.setAttribute('aria-label', `${name}. ${explanation}`);
+      const explanation = participantExplanation(id, votesByPerson[id], formatTime);
       tooltip.bind(button, explanation);
       item.append(button);
       list.append(item);
@@ -57,11 +57,11 @@ export function createResultsRenderer(container) {
       const stats = element('div', 'date-stats');
       stats.append(
         countNode(group.explicitIds.length, group.implicitIds.length, 'date-count', 'Day: '),
-        countNode(group.bestTopicExplicitCount, group.bestTopicImplicitCount, 'best-topic-count', 'Top topic: ', ['Date', 'Topic']),
+        countNode(group.bestTopicExplicitCount, group.bestTopicImplicitCount, 'best-topic-count', 'Top topic: ', ['Date', 'Topic'], 'Largest topic group for this date.'),
       );
       heading.append(element('h3', '', group.date), stats);
       const attendees = element('div', 'date-attendees');
-      attendees.append(people(group.ids, names, group.implicitIds, group.votesByPerson, ['Date']));
+      attendees.append(people(group.ids, names, group.implicitIds, group.votesByPerson));
       card.append(heading, attendees);
       for (const section of group.sections) {
         const block = element('section', 'date-section');
@@ -71,7 +71,7 @@ export function createResultsRenderer(container) {
           const row = element('div', 'date-option');
           row.append(element('span', 'option-name', option.text),
             countNode(option.explicitIds.length, option.implicitIds.length, 'option-count', '', context),
-            people(option.ids, names, option.implicitIds, group.votesByPerson, context));
+            people(option.ids, names, option.implicitIds, group.votesByPerson));
           block.append(row);
         }
         card.append(block);

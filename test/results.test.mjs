@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { groupByDate, filterTopics } from '../src/domain/polls.mjs';
-import { demo } from '../src/demo.mjs';
+import { samplePolls } from './fixtures/polls.mjs';
 import { createResultsRenderer } from '../src/ui/results.mjs';
 
 class Element {
@@ -24,7 +24,7 @@ class Element {
 }
 function find(node, predicate) { return [...(predicate(node) ? [node] : []), ...node.children.flatMap(child => find(child, predicate))]; }
 
-test('date cards expose every name/count in topic-time-place order; IDs appear only in a dismissible tooltip', () => {
+test('date cards expose every name/count in topic-time-place order; IDs appear only in a dismissible tooltip', async () => {
   const body = new Element('body');
   const docEvents = {}, windowEvents = {};
   globalThis.document = { createElement:tag => new Element(tag), body, addEventListener:(type, handler) => { docEvents[type] = handler; } };
@@ -32,7 +32,7 @@ test('date cards expose every name/count in topic-time-place order; IDs appear o
   globalThis.requestAnimationFrame = callback => callback();
   const container = new Element('main');
   const render = createResultsRenderer(container);
-  const data = demo();
+  const data = samplePolls();
   render(groupByDate(data.polls), data.names);
   assert.equal(container.children.length, 2);
   assert.deepEqual(find(container.children[0], el => el.tag === 'h4').map(el => el.textContent), ['Topics','Time','Places']);
@@ -48,7 +48,7 @@ test('date cards expose every name/count in topic-time-place order; IDs appear o
   const vasya = buttons.find(button => button.textContent === 'Alex');
   vasya.emit('click');
   const tooltip = body.children[0];
-  assert.equal(tooltip.textContent, 'Telegram ID: 1');
+  assert.equal(tooltip.textContent, ['Topic', 'Date', 'Time', 'Place'].map(label => `${label} — time unavailable`).concat('Telegram ID: 1').join('\n'));
   assert.equal(tooltip.hidden, false);
   assert.equal(tooltip.style.left, '124px'); // Clamped to the narrow screen.
   assert.equal(vasya.attributes['aria-describedby'], 'personTooltip');
@@ -58,6 +58,11 @@ test('date cards expose every name/count in topic-time-place order; IDs appear o
   vasya.emit('mouseenter');
   assert.equal(tooltip.hidden, false);
   vasya.emit('mouseleave');
+  tooltip.emit('mouseenter');
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.equal(tooltip.hidden, false);
+  tooltip.emit('mouseleave');
+  await new Promise(resolve => setTimeout(resolve, 250));
   assert.equal(tooltip.hidden, true);
   vasya.emit('focus');
   assert.equal(tooltip.hidden, false);
@@ -79,12 +84,15 @@ test('date cards expose every name/count in topic-time-place order; IDs appear o
   const implicit = find(container, el => el.className === 'person implicit');
   assert.ok(implicit.length > 0);
   assert.ok(implicit.every(button => button.textContent === 'Sam'));
-  assert.ok(implicit.every(button => /no vote/.test(button.attributes['aria-label'])));
+  for (const button of implicit) {
+    button.emit('click');
+    assert.match(tooltip.textContent, /Topic — no vote/);
+  }
   const count = find(container, el => el.className === 'option-count')[0];
   assert.equal(count.textContent, '2(+1?)');
   count.emit('click');
   assert.equal(tooltip.hidden, false);
-  assert.match(tooltip.textContent, /Implicit: 1/);
+  assert.match(tooltip.textContent, /1 person has no vote/);
   assert.match(tooltip.textContent, /no vote in Date or Topic/);
   assert.match(tooltip.textContent, /Total: 3/);
   for (const row of find(container, el => el.className === 'date-option')) {
@@ -94,7 +102,7 @@ test('date cards expose every name/count in topic-time-place order; IDs appear o
   }
   const lastTopic = find(container.children[1], el => el.className === 'date-option')[0];
   assert.deepEqual(find(lastTopic, el => el.className === 'person' || el.className === 'person implicit').map(el => el.textContent), ['Anna','Pat','Chris','Sam']);
-  const missingDate = demo();
+  const missingDate = samplePolls();
   missingDate.polls[1].options[1].voters = ['3','4','6'];
   render(groupByDate(missingDate.polls), missingDate.names);
   assert.deepEqual(find(container, el => el.className === 'date-count').map(el => el.textContent), ['Day: 4(+1?)','Day: 3(+1?)']);
@@ -111,32 +119,35 @@ test('date cards expose every name/count in topic-time-place order; IDs appear o
   delete globalThis.document; delete globalThis.window; delete globalThis.requestAnimationFrame;
 });
 
-test('implicit tooltips list the missing polls first and all explicit polls afterwards', () => {
+test('day and option names share all four vote times, missing votes first, with context-specific implicit styling', () => {
   const body = new Element('body');
   globalThis.document = { createElement: tag => new Element(tag), body, addEventListener() {} };
   globalThis.window = { innerWidth: 390, innerHeight: 844, addEventListener() {} };
   const container = new Element('main');
   const render = createResultsRenderer(container);
   try {
-    for (const missing of [[0], [1], [0, 1], [0, 1, 2]]) {
+    const start = Date.UTC(2026, 10, 12, 12) / 1000;
+    const format = new Intl.DateTimeFormat('en-GB', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+    const labels = ['Topic', 'Date', 'Time', 'Place'];
+    for (const missing of [[], [0], [1], [0, 1], [0, 1, 2]]) {
       const polls = Array.from({ length: 4 }, (_, index) => ({ options: [
         { text: `Option ${index}`, voters: missing.includes(index) ? ['1'] : ['1', '2'] },
-      ] }));
+      ], votedAt:{'2':index === 3 ? null : start + index * 60} }));
       render(groupByDate(polls), { '1': 'Explicit participant', '2': 'Flexible participant' });
       const topic = find(container, node => node.className === 'date-option')[0];
-      const participant = find(topic, node => node.className === 'person implicit')[0];
+      const participant = find(topic, node => node.textContent === 'Flexible participant')[0];
       participant.emit('click');
       const text = body.children[0].textContent;
-      const assumed = [1, 0].filter(index => missing.includes(index)).map(index => ['Topic', 'Date'][index]).join(', ');
-      assert.ok(text.startsWith(`Implicit here: ${assumed} — no vote; all options assumed.`));
-      assert.ok(text.indexOf('Explicit votes:') > text.indexOf('Implicit here:'));
-      assert.match(text, /Telegram ID: 2/);
-      assert.equal(participant.attributes['aria-label'], `Flexible participant. ${text}`);
-      for (const [index, label] of ['Topic', 'Date', 'Time', 'Place'].entries()) {
-        const explicitLine = text.split('\n').find(line => line.startsWith('Explicit votes:'));
-        assert.equal(explicitLine.includes(label), !missing.includes(index));
-      }
-      if (missing.includes(2)) assert.match(text, /Other implicit polls: Time — no vote/);
+      const ordered = [...labels.keys()].filter(index => missing.includes(index))
+        .concat([...labels.keys()].filter(index => !missing.includes(index)));
+      assert.deepEqual(text.split('\n'), ordered.map(index => `${labels[index]} — ${missing.includes(index) ? 'no vote' : index === 3 ? 'time unavailable' : format.format(new Date((start + index * 60) * 1000))}`).concat('Telegram ID: 2'));
+      assert.equal(participant.attributes['aria-describedby'], 'personTooltip');
+      assert.equal(participant.className, missing.includes(0) || missing.includes(1) ? 'person implicit' : 'person');
+      const attendees = find(container, node => node.className === 'date-attendees')[0];
+      const dayName = find(attendees, node => node.textContent === 'Flexible participant')[0];
+      assert.equal(dayName.className, missing.includes(1) ? 'person implicit' : 'person');
+      dayName.emit('click');
+      assert.equal(body.children[0].textContent, text);
     }
   } finally {
     delete globalThis.document;

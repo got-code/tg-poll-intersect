@@ -7,6 +7,7 @@ export function createPollForm({ onLinksChange, onMinimumChange }) {
   const fields = POLL_LABELS.map((_, index) => $(`link${index}`));
   const minimum = $('topicMinimum');
   const clear = $('clearLinks');
+  const details = $('pollLinks');
   const preferences = readPreferences();
   fields.forEach((field, index) => { field.value = preferences.links[index]; });
   minimum.value = String(preferences.topicMinimum);
@@ -14,6 +15,22 @@ export function createPollForm({ onLinksChange, onMinimumChange }) {
   const values = () => fields.map(field => field.value);
   const resolved = () => resolveLinkValues(values());
   const getMinimum = () => topicMinimum(minimum.value);
+
+  function readLinks(revealError = true) {
+    const seen = new Set();
+    return resolved().map((value, index) => {
+      try {
+        const link = parseLink(value);
+        const identity = linkIdentity(link);
+        if (seen.has(identity)) throw new UserFacingError('Choose four different poll messages.');
+        seen.add(identity);
+        return link;
+      } catch (error) {
+        if (revealError) { details.open = true; fields[index].focus(); }
+        throw new UserFacingError(`${POLL_LABELS[index]}: ${error.message}`);
+      }
+    });
+  }
 
   function updateSuggestions() {
     const links = resolved();
@@ -24,6 +41,10 @@ export function createPollForm({ onLinksChange, onMinimumChange }) {
         : !field.value.trim() && links[index] ? 'Automatic · next message after the previous poll.' : 'Leave blank to use the next message.';
     });
     clear.hidden = fields.filter(field => field.value.trim()).length < 2;
+    let configured = false;
+    try { readLinks(false); configured = true; } catch { /* Incomplete input stays editable. */ }
+    $('pollLinksCount').textContent = configured ? ' · 4 polls' : '';
+    return configured;
   }
 
   function persist() {
@@ -36,7 +57,9 @@ export function createPollForm({ onLinksChange, onMinimumChange }) {
     persist();
     onLinksChange();
   }));
+  fields.forEach(field => field.addEventListener('invalid', () => { details.open = true; }));
   clear.addEventListener('click', () => {
+    details.open = true;
     fields.forEach(field => { field.value = ''; });
     updateSuggestions();
     persist();
@@ -50,21 +73,15 @@ export function createPollForm({ onLinksChange, onMinimumChange }) {
     // Input already updated the results. Replacing them again on blur would
     // remove the participant button receiving keyboard or pointer focus.
   });
-  updateSuggestions();
+  details.open = !updateSuggestions();
 
   return {
     getMinimum,
     identities: () => resolved().map(value => { try { return linkIdentity(parseLink(value)); } catch { return ''; } }),
-    readLinks() {
-      const links = resolved().map((value, index) => {
-        try { return parseLink(value); }
-        catch (error) {
-          fields[index].focus();
-          throw new UserFacingError(`${POLL_LABELS[index]}: ${error.message}`);
-        }
-      });
-      if (new Set(links.map(linkIdentity)).size !== 4) throw new UserFacingError('Choose four different poll messages.');
-      return links;
+    readLinks: () => readLinks(),
+    collapse() {
+      if (fields.includes(document.activeElement) || document.activeElement === clear) $('pollLinksToggle').focus();
+      details.open = false;
     },
     setDisabled(disabled) {
       [...fields, clear].forEach(control => { control.disabled = disabled; });

@@ -1,4 +1,5 @@
 import { UserFacingError } from '../domain/errors.mjs';
+import encodeQR from 'qr';
 import { auth, createClient, explainError } from '../infrastructure/telegram.mjs';
 import { hasSavedSession, readSavedSession, writeSavedSession, forgetSavedSession, encryptSession, decryptSession, validateSavePassword } from '../infrastructure/session.mjs';
 import { $, status } from './dom.mjs';
@@ -7,6 +8,42 @@ export function createAuthController() {
   let client = null, pendingClient = null, authStep = 'credentials';
   let authPhone = '', codeHash = '', generation = 0;
   let continueRefresh = null, authenticatedUser = null;
+  let loginMethod = 'phone', qrAbort = null, qrExpiryTimer = null;
+
+  function setFields(container, fields, visible) {
+    $(container).hidden = !visible;
+    fields.forEach(id => { $(id).required = visible; $(id).disabled = !visible; });
+  }
+  function setBusy(busy) {
+    ['loginSubmit', 'skipSave', 'forgetSession'].forEach(id => { $(id).disabled = busy; });
+  }
+  function clearInputs(ids) {
+    ids.forEach(id => { $(id).value = ''; });
+  }
+  function takeSecret(id) {
+    const value = $(id).value;
+    $(id).value = '';
+    return value;
+  }
+  function clearQr() {
+    clearTimeout(qrExpiryTimer);
+    qrExpiryTimer = null;
+    $('qrCode').hidden = true;
+    $('qrCode').removeAttribute('src');
+  }
+  function cancelPendingLogin() {
+    generation++;
+    qrAbort?.abort();
+    qrAbort = null;
+    clearQr();
+    pendingClient?.destroy().catch(() => {});
+    pendingClient = null;
+  }
+  function credentialsHint() {
+    return loginMethod === 'qr'
+      ? 'Sign in with Telegram on another device.'
+      : 'Sign in with your phone number.';
+  }
 
   function updateConnectionButtons() {
     const saved = hasSavedSession();
@@ -18,31 +55,31 @@ export function createAuthController() {
 
   function setAuthStep(step) {
     authStep = step;
-    $('credentials').hidden = step !== 'credentials';
-    ['apiId', 'apiHash', 'phone'].forEach(id => { $(id).required = step === 'credentials'; $(id).disabled = step !== 'credentials'; });
+    $('loginMethods').hidden = !['credentials', 'qr'].includes(step);
+    $('phoneLogin').setAttribute('aria-pressed', String(loginMethod === 'phone'));
+    $('qrLogin').setAttribute('aria-pressed', String(loginMethod === 'qr'));
+    setFields('credentials', ['apiId', 'apiHash'], step === 'credentials');
+    setFields('phoneLabel', ['phone'], step === 'credentials' && loginMethod === 'phone');
+    setFields('codeLabel', ['code'], step === 'code');
+    setFields('passwordLabel', ['password'], step === 'password');
+    setFields('unlockLabel', ['unlockPassword'], step === 'unlock');
+    setFields('saveFields', ['savePassword', 'saveConfirm'], step === 'save');
     $('remember').disabled = step !== 'credentials';
-    $('codeLabel').hidden = step !== 'code';
-    $('code').required = step === 'code';
-    $('code').disabled = step !== 'code';
-    $('passwordLabel').hidden = step !== 'password';
-    $('password').required = step === 'password';
-    $('password').disabled = step !== 'password';
-    $('unlockLabel').hidden = step !== 'unlock';
-    $('unlockPassword').required = step === 'unlock';
-    $('unlockPassword').disabled = step !== 'unlock';
-    $('saveFields').hidden = step !== 'save';
-    ['savePassword', 'saveConfirm'].forEach(id => { $(id).required = step === 'save'; $(id).disabled = step !== 'save'; });
+    $('qrFields').hidden = step !== 'qr';
+    if (step !== 'qr') clearQr();
     $('skipSave').hidden = step !== 'save';
     $('forgetSession').hidden = step !== 'unlock';
-    const titles = { credentials: 'Sign in to Telegram', code: 'Confirm sign-in', password: 'Two-step verification', unlock: 'Unlock saved login', save: 'Save login' };
-    const buttons = { credentials: 'Send code', code: 'Sign in', password: 'Sign in', unlock: 'Unlock', save: 'Save' };
+    const titles = { credentials: 'Sign in to Telegram', qr: 'Scan with Telegram', code: 'Confirm sign-in', password: 'Two-step verification', unlock: 'Unlock saved login', save: 'Save login' };
+    const buttons = { credentials: loginMethod === 'qr' ? 'Show QR code' : 'Send code', code: 'Sign in', password: 'Sign in', unlock: 'Unlock', save: 'Save' };
     $('loginHeading').textContent = titles[step];
-    $('loginSubmit').textContent = buttons[step];
-    const focus = { credentials: 'apiId', code: 'code', password: 'password', unlock: 'unlockPassword', save: 'savePassword' };
+    $('loginSubmit').hidden = step === 'qr';
+    $('loginSubmit').textContent = buttons[step] ?? 'Sign in';
+    const credentialsFocus = !$('apiId').value ? 'apiId' : !$('apiHash').value ? 'apiHash' : loginMethod === 'phone' ? 'phone' : 'loginSubmit';
+    const focus = { credentials: credentialsFocus, qr: 'qrLogin', code: 'code', password: 'password', unlock: 'unlockPassword', save: 'savePassword' };
     if ($('login').open) $(focus[step]).focus();
   }
   function clearSecrets() {
-    ['apiId', 'apiHash', 'phone', 'code', 'password', 'unlockPassword', 'savePassword', 'saveConfirm'].forEach(id => { $(id).value = ''; });
+    clearInputs(['apiId', 'apiHash', 'phone', 'code', 'password', 'unlockPassword', 'savePassword', 'saveConfirm']);
     $('remember').checked = false;
     authPhone = ''; codeHash = ''; authenticatedUser = null;
   }
@@ -53,20 +90,29 @@ export function createAuthController() {
     clearSecrets();
     status('', false, 'loginStatus');
     const saved = hasSavedSession();
-    $('loginHint').textContent = saved ? 'Enter the password for your saved login. Your API keys and Telegram code are not needed.' : 'Enter your application’s keys and phone number. Select the checkbox below to save your login.';
+    $('loginHint').textContent = saved ? 'Enter the password you chose for this browser.' : credentialsHint();
     setAuthStep(saved ? 'unlock' : 'credentials');
     $('login').showModal();
   }
   $('connect').addEventListener('click', () => openLogin());
   $('cancelLogin').addEventListener('click', () => $('login').close());
   $('login').addEventListener('close', () => {
-    generation++;
+    cancelPendingLogin();
     clearSecrets();
-    pendingClient?.destroy().catch(() => {});
-    pendingClient = null;
-    ['loginSubmit', 'skipSave', 'forgetSession'].forEach(id => { $(id).disabled = false; });
+    setBusy(false);
     updateConnectionButtons();
   });
+  for (const method of ['phone', 'qr']) {
+    $(`${method}Login`).addEventListener('click', () => {
+      if (!['credentials', 'qr'].includes(authStep) || loginMethod === method) return;
+      cancelPendingLogin();
+      loginMethod = method;
+      setAuthStep('credentials');
+      $('loginHint').textContent = credentialsHint();
+      setBusy(false);
+      status('', false, 'loginStatus');
+    });
+  }
 
   function completeLogin(user, message = 'Signed in') {
     client = pendingClient;
@@ -91,55 +137,81 @@ export function createAuthController() {
   $('forgetSession').addEventListener('click', () => {
     try { forgetSavedSession(); }
     catch (error) { status(explainError(error), true, 'loginStatus'); return; }
-    generation++;
-    pendingClient?.destroy().catch(() => {});
-    pendingClient = null;
+    cancelPendingLogin();
     clearSecrets();
     setAuthStep('credentials');
-    $('loginHint').textContent = 'Enter your application’s keys and phone number to sign in again.';
+    $('loginHint').textContent = credentialsHint();
     status('The saved copy was removed. Revoke the old session in Telegram → Settings → Devices.', false, 'loginStatus');
     updateConnectionButtons();
   });
   $('loginForm').addEventListener('submit', async event => {
     event.preventDefault();
-    if ($('loginSubmit').disabled) return;
+    if ($('loginSubmit').disabled || authStep === 'qr') return;
     const token = generation;
     const step = authStep;
-    ['loginSubmit', 'skipSave', 'forgetSession'].forEach(id => { $(id).disabled = true; });
+    setBusy(true);
     status(step === 'save' ? 'Encrypting and saving…' : step === 'unlock' ? 'Unlocking…' : 'Connecting…', false, 'loginStatus');
     try {
       if (step === 'credentials') {
         if (!Number.isInteger(Number($('apiId').value)) || Number($('apiId').value) < 1 || Number($('apiId').value) > 2147483647 || !/^[0-9a-fA-F]{32}$/.test($('apiHash').value)) throw new UserFacingError('Check the numeric API ID and 32-character API hash.');
-        if (!/^\+[\d\s()-]{7,24}$/.test($('phone').value.trim())) throw new UserFacingError('Enter your phone number with a country code, starting with +.');
+        if (loginMethod === 'phone' && !/^\+[\d\s()-]{7,24}$/.test($('phone').value.trim())) throw new UserFacingError('Enter your phone number with a country code, starting with +.');
         if (!globalThis.crypto?.subtle) throw new UserFacingError('WebCrypto is unavailable. Open the HTTPS site in a modern browser.');
         pendingClient?.destroy().catch(() => {});
-        pendingClient = createClient(Number($('apiId').value), $('apiHash').value);
+        pendingClient = createClient(Number($('apiId').value), $('apiHash').value, { qrLogin: loginMethod === 'qr' });
+        if (loginMethod === 'qr') {
+          qrAbort = new AbortController();
+          setAuthStep('qr');
+          $('loginHint').textContent = 'Waiting for Telegram to generate a QR code…';
+          const user = await auth.qr(pendingClient, {
+            abortSignal: qrAbort.signal,
+            onUrlUpdated(url, expires) {
+              if (token !== generation) return;
+              clearQr();
+              const remaining = expires.getTime() - Date.now();
+              if (remaining <= 0) return;
+              $('qrCode').src = encodeQR(url, 'data-url', { border: 4, scale: 6 });
+              $('qrCode').hidden = false;
+              $('loginHint').textContent = 'The QR code refreshes automatically.';
+              status('', false, 'loginStatus');
+              qrExpiryTimer = setTimeout(() => {
+                if (token !== generation) return;
+                clearQr();
+                status('Updating QR code…', false, 'loginStatus');
+              }, remaining);
+            },
+            onQrScanned() {
+              if (token !== generation) return;
+              clearQr();
+              status('QR code accepted. Completing sign-in…', false, 'loginStatus');
+            },
+          });
+          if (token === generation) finishTelegramLogin(user);
+          return;
+        }
         authPhone = $('phone').value.trim();
         const sent = await auth.sendCode(pendingClient, authPhone);
         if (token !== generation) return;
         if (!sent.phoneCodeHash) { finishTelegramLogin(sent); return; }
         if (!['app', 'sms', 'call', 'email', 'sms_word', 'sms_phrase'].includes(sent.type)) throw new UserFacingError('Telegram requested an unsupported sign-in method.');
         codeHash = sent.phoneCodeHash;
-        ['apiId', 'apiHash', 'phone'].forEach(id => { $(id).value = ''; });
+        clearInputs(['apiId', 'apiHash', 'phone']);
         setAuthStep('code');
         const where = { app: 'in the Telegram app', sms: 'by SMS', call: 'in a phone call', email: 'by email', sms_word: 'by SMS', sms_phrase: 'by SMS' };
         $('loginHint').textContent = `Enter the code received ${where[sent.type]}. Do not share it.`;
         status('', false, 'loginStatus');
       } else if (step === 'code') {
-        const code = $('code').value.trim();
-        $('code').value = '';
+        const code = takeSecret('code').trim();
         const user = await auth.signIn(pendingClient, authPhone, codeHash, code);
         if (token === generation) finishTelegramLogin(user);
       } else if (step === 'password') {
-        const password = $('password').value;
-        $('password').value = '';
+        const password = takeSecret('password');
         const user = await auth.password(pendingClient, password);
         if (token === generation) finishTelegramLogin(user);
       } else if (step === 'save') {
         const password = $('savePassword').value;
         if (password !== $('saveConfirm').value) throw new UserFacingError('The passwords do not match. Try again.');
         validateSavePassword(password);
-        $('savePassword').value = ''; $('saveConfirm').value = '';
+        clearInputs(['savePassword', 'saveConfirm']);
         const attempt = pendingClient;
         const session = await attempt.exportSession();
         const credentials = await attempt.getApiCredentials();
@@ -149,8 +221,7 @@ export function createAuthController() {
         writeSavedSession(encrypted);
         completeLogin(authenticatedUser, 'Login saved in this browser');
       } else if (step === 'unlock') {
-        const password = $('unlockPassword').value;
-        $('unlockPassword').value = '';
+        const password = takeSecret('unlockPassword');
         const data = await decryptSession(readSavedSession(), password);
         if (token !== generation) return;
         pendingClient = createClient(data.apiId, data.apiHash);
@@ -169,12 +240,21 @@ export function createAuthController() {
     } catch (error) {
       if (token !== generation) return;
       if ((error.text || error.message || '').includes('SESSION_PASSWORD_NEEDED')) {
+        clearInputs(['apiId', 'apiHash', 'phone']);
         setAuthStep('password');
         $('loginHint').textContent = 'Two-step verification is enabled. Enter your 2FA password.';
         status('', false, 'loginStatus');
-      } else { status(explainError(error), true, 'loginStatus'); }
+      } else {
+        if (authStep === 'qr') {
+          cancelPendingLogin();
+          setBusy(false);
+          setAuthStep('credentials');
+          $('loginHint').textContent = credentialsHint();
+        }
+        status(explainError(error), true, 'loginStatus');
+      }
     } finally {
-      if (token === generation) ['loginSubmit', 'skipSave', 'forgetSession'].forEach(id => { $(id).disabled = false; });
+      if (token === generation) setBusy(false);
     }
   });
 

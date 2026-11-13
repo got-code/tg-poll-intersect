@@ -85,7 +85,68 @@ test('actual SDK send-code response passes through client diagnostics without ex
   }
 });
 
-function fakeTelegram({ incomplete = false, change = false, anonymous = false } = {}) {
+test('actual SDK QR flow refreshes expired tokens, accepts updates without enabling chat updates, and migrates DC', async () => {
+  globalThis.navigator ??= {};
+  const client = adapter.createClient(12345, 'abcdef0123456789abcdef0123456789', { qrLogin:true });
+  const requests = [], urls = [], migrations = [], users = [];
+  const user = {_: 'user', id:123, firstName:'QR user', self:true};
+  let exports = 0, scanned = 0;
+  client.call = async request => {
+    requests.push(request);
+    if (request._ === 'auth.exportLoginToken') {
+      exports++;
+      if (exports <= 2) return {_: 'auth.loginToken', token:new Uint8Array([exports, 255]), expires:Math.floor(Date.now()/1000) + (exports === 1 ? -1 : 30)};
+      return {_: 'auth.loginTokenMigrateTo', dcId:4, token:new Uint8Array([42])};
+    }
+    if (request._ === 'auth.importLoginToken') return {_: 'auth.loginTokenSuccess', authorization:{_: 'auth.authorization', user}};
+    if (request._ === 'users.getUsers') return [user];
+    throw new Error(`Unexpected request: ${request._}`);
+  };
+  client.changePrimaryDc = async dc => migrations.push(dc);
+  client.notifyLoggedIn = async value => { users.push(value); return value; };
+  try {
+    assert.equal(client.updates, undefined);
+    assert.equal(client.params.disableUpdates, false);
+    const signedIn = await adapter.auth.qr(client, {
+      onUrlUpdated(url, expires) {
+        urls.push([url, expires]);
+        if (urls.length === 2) queueMicrotask(() => client.onServerUpdate.emit({_: 'updateShort', update:{_: 'updateLoginToken'}}));
+      },
+      onQrScanned() { scanned++; },
+    });
+    assert.equal(signedIn.displayName, 'QR user');
+    assert.deepEqual(urls.map(([url]) => url), ['tg://login?token=Af8', 'tg://login?token=Av8']);
+    assert.ok(urls.every(([, expires]) => expires instanceof Date));
+    assert.deepEqual(migrations, [4]);
+    assert.deepEqual(users, [user]);
+    assert.equal(scanned, 1);
+    assert.equal(client.onServerUpdate.length, 0);
+    assert.deepEqual(requests.map(request => request._), ['auth.exportLoginToken', 'auth.exportLoginToken', 'auth.exportLoginToken', 'auth.importLoginToken', 'users.getUsers']);
+    assert.equal(requests[0].apiId, 12345);
+    assert.equal(requests[0].apiHash, 'abcdef0123456789abcdef0123456789');
+  } finally { await client.destroy(); }
+});
+
+test('actual SDK QR flow propagates 2FA and aborts cleanly without leaving an update listener', async () => {
+  for (const mode of ['2fa', 'abort']) {
+    const client = adapter.createClient(12345, 'abcdef0123456789abcdef0123456789');
+    const controller = new AbortController();
+    const error = new Error(mode === '2fa' ? 'SESSION_PASSWORD_NEEDED' : 'Cancelled QR login');
+    client.call = async () => {
+      if (mode === '2fa') throw error;
+      return {_: 'auth.loginToken', token:new Uint8Array([1]), expires:Math.floor(Date.now()/1000) + 30};
+    };
+    try {
+      await assert.rejects(adapter.auth.qr(client, {
+        abortSignal:controller.signal,
+        onUrlUpdated() { queueMicrotask(() => controller.abort(error)); },
+      }), value => value === error);
+      assert.equal(client.onServerUpdate.length, 0);
+    } finally { await client.destroy(); }
+  }
+});
+
+function fakeTelegram({ incomplete = false, change = false, anonymous = false, multipleOptions = false, asChat = false } = {}) {
   let getMessagesCalls = 0, voterCalls = 0;
   const option = new Uint8Array([0]);
   return {
@@ -100,8 +161,8 @@ function fakeTelegram({ incomplete = false, change = false, anonymous = false } 
             _: 'message', id, peerId: { _: 'peerChannel', channelId: 10 }, message: '', date: 1,
             media: {
               _: 'messageMediaPoll',
-              poll: { _: 'poll', id, publicVoters: !anonymous, question: {text: `Poll ${id}`, entities: []}, answers: [{ _: 'pollAnswer', text: {text: 'Option', entities: []}, option }] },
-              results: { _: 'pollResults', totalVoters: 2, results: [{ _: 'pollAnswerVoters', option, voters: change && getMessagesCalls > 4 ? 3 : 2 }] },
+              poll: { _: 'poll', id, publicVoters: !anonymous, question: {text: `Poll ${id}`, entities: []}, answers: [option, ...(multipleOptions ? [new Uint8Array([1])] : [])].map(option => ({ _: 'pollAnswer', text: {text: 'Option', entities: []}, option })) },
+              results: { _: 'pollResults', totalVoters: 2, results: [option, ...(multipleOptions ? [new Uint8Array([1])] : [])].map(option => ({ _: 'pollAnswerVoters', option, voters: change && getMessagesCalls > 4 ? 3 : 2 })) },
             },
           }],
         };
@@ -109,7 +170,10 @@ function fakeTelegram({ incomplete = false, change = false, anonymous = false } 
       if (request._ === 'messages.getPollVotes') {
         voterCalls++;
         const userId = request.offset ? 2 : 1;
-        return { count: 2, users: [{ _: 'user', id: userId, firstName: 'Same name' }], chats: [], votes: [{ _: 'messagePeerVote', peer: { _: 'peerUser', userId }, option }], nextOffset: !request.offset && !incomplete ? 'second-page' : '' };
+        const peer = asChat && userId === 2 ? {_: 'peerChannel', channelId:2} : {_: 'peerUser', userId};
+        return { count: 2, users: [{ _: 'user', id: userId, firstName: 'Same name' }], chats: [{_: 'channel', id:2, title:'Group voter'}],
+          votes: [{ _: 'messagePeerVoteInputOption', peer, date:Date.UTC(2026,10,12,8)/1000 + userId + request.option[0] * 60 }],
+          nextOffset: !request.offset && !incomplete ? 'second-page' : '' };
       }
       throw new Error(`Unexpected mutation/request: ${request._}`);
     },
@@ -124,9 +188,23 @@ test('Telegram adapter reads four real TL-shaped poll fixtures, pages voters, ke
   assert.equal(client.voterCalls, 8);
   assert.equal(data.polls.length, 4);
   assert.equal(Object.keys(data.names).length, 2);
+  assert.equal(data.polls[0].votedAt['user:1'], Date.UTC(2026,10,12,8)/1000 + 1);
   const [group] = groupByDate(data.polls);
   assert.equal(group.ids.length, 2);
   assert.ok(group.sections.every(section => section.options[0].ids.length === 2));
+});
+
+test('Telegram adapter carries vote times for user and chat voters and merges multiple choices by latest time', async () => {
+  const data = await adapter.fetchPolls(fakeTelegram({multipleOptions:true, asChat:true}), links, () => {});
+  assert.equal(data.polls[0].options.length, 2);
+  assert.equal(data.names['peerChannel:2'], 'Group voter');
+  for (const poll of data.polls) {
+    assert.equal(poll.votedAt['user:1'], Date.UTC(2026,10,12,8)/1000 + 61);
+    assert.equal(poll.votedAt['peerChannel:2'], Date.UTC(2026,10,12,8)/1000 + 62);
+  }
+  const [group] = groupByDate(data.polls);
+  assert.equal(group.votesByPerson['peerChannel:2'].length, 4);
+  assert.ok(group.votesByPerson['peerChannel:2'].every(vote => vote.voted && vote.at === Date.UTC(2026,10,12,8)/1000 + 62));
 });
 
 test('adapter rejects partial and changing polls, refuses anonymous polls before fetching voters', async () => {

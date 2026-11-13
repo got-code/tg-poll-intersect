@@ -1,5 +1,6 @@
 const AUTH_METHODS = new Set([
   'auth.sendCode', 'auth.resendCode', 'auth.signIn', 'auth.checkPassword',
+  'auth.exportLoginToken', 'auth.importLoginToken',
   'auth.logOut', 'account.getPassword', 'users.getUsers',
 ]);
 const RPC_ERRORS = new Set([
@@ -11,6 +12,7 @@ const RPC_ERRORS = new Set([
   'PHONE_PASSWORD_PROTECTED', 'PASSWORD_HASH_INVALID', 'PASSWORD_EMPTY',
   'SESSION_PASSWORD_NEEDED', 'SESSION_REVOKED', 'AUTH_KEY_UNREGISTERED',
   'SMS_CODE_CREATE_FAILED', 'SEND_CODE_UNAVAILABLE', 'UPDATE_APP_TO_LOGIN',
+  'AUTH_TOKEN_EXPIRED', 'AUTH_TOKEN_INVALID', 'AUTH_TOKEN_INVALID1', 'AUTH_TOKEN_ALREADY_ACCEPTED',
   'EMAIL_UNCONFIRMED', 'EMAIL_NOT_ALLOWED', 'EMAIL_INVALID',
 ]);
 

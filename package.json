@@ -8,8 +8,9 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "pnpm build && pnpm test"
+    "test:browser": "node test/browser.mjs",
+    "check": "pnpm build && pnpm test && pnpm test:browser"
   },
-  "dependencies": {"@mtcute/web": "0.32.8"},
-  "devDependencies": {"esbuild": "0.25.5"}
+  "dependencies": {"@mtcute/web": "0.32.8", "qr": "0.7.2"},
+  "devDependencies": {"esbuild": "0.25.5", "playwright": "1.62.1"}
 }

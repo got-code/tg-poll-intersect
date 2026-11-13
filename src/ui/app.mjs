@@ -7,7 +7,6 @@ import { hasSavedSession } from '../infrastructure/session.mjs';
 import { createAuthController } from './auth.mjs';
 import { createPollForm } from './poll-form.mjs';
 import { createResultsRenderer } from './results.mjs';
-import { bindDiagnostics } from './diagnostics.mjs';
 import { $, element, status } from './dom.mjs';
 
 export function startApp() {
@@ -74,6 +73,7 @@ export function startApp() {
     if (result?.kind === 'live') $('resultMeta').textContent = `Refreshing… Previous results: ${result.updatedAt}`;
     try {
       showData(await fetchPolls(client, links, text => status(text)), 'live', links);
+      form.collapse();
       status('Done. All four polls have been loaded.');
     } catch (error) {
       status(explainError(error), true);
@@ -113,5 +113,4 @@ export function startApp() {
       status(outcome.message, outcome.error);
     } finally { setBusy(false); }
   });
-  bindDiagnostics();
 }

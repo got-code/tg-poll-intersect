@@ -1,0 +1,4 @@
+minimumReleaseAgeExclude:
+  - '@mtcute/core@0.32.8'
+  - '@mtcute/wasm@0.32.8'
+  - '@mtcute/web@0.32.8'

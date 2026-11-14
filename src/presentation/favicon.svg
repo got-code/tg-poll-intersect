@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <title>Poll Intersections</title>
+  <style>
+    :root {
+      --paper: #f7f7f2;
+      --green: #246c50;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --paper: #131a17;
+        --green: #91d2b0;
+      }
+    }
+  </style>
+  <rect
+    x="1"
+    y="1"
+    width="30"
+    height="30"
+    rx="7"
+    fill="var(--paper)"
+    stroke="var(--green)"
+    stroke-width="2"
+  />
+  <g fill="var(--green)">
+    <rect x="6" y="16" width="4" height="10" rx="1" />
+    <rect x="14" y="8" width="4" height="18" rx="1" />
+    <rect x="22" y="12" width="4" height="14" rx="1" />
+  </g>
+</svg>

@@ -5,37 +5,38 @@ import {
   readPollLinks,
   PollLinkError,
 } from '../application/links.ts';
-import { POLL_KINDS } from '../domain/models.ts';
-import { POLL_LABELS } from './labels.ts';
+import { pollLabels } from './labels.ts';
 import { UserFacingError } from '../../../application/errors.ts';
-import type { PreferencesStore } from '../application/preferences.ts';
-import { resolveTopicMinimum } from '../application/preferences.ts';
+import { element } from '../../../presentation/dom.ts';
+import type { Poll } from '../domain/models.ts';
 import { $ } from './dom.ts';
 
 export function createPollForm({
-  preferences,
+  links,
   onLinksChange,
-  onMinimumChange,
 }: {
-  preferences: PreferencesStore;
+  links: readonly string[];
   onLinksChange: () => void;
-  onMinimumChange: () => void;
 }) {
-  const fields = POLL_KINDS.map((_, index) => $(`link${index}`));
-  const minimum = $('topicMinimum');
-  const clear = $('clearLinks');
   const details = $('pollLinks');
-  const saved = preferences.readPreferences();
-  fields.forEach((field, index) => {
-    field.value = saved.links[index];
-  });
-  minimum.value = String(saved.topicMinimum);
-
-  const values = () => fields.map((field) => field.value);
+  const clear = $('clearLinks');
+  const add = $('addPoll');
+  let rows: {
+    input: HTMLInputElement;
+    caption: HTMLElement;
+    hint: HTMLElement;
+    remove: HTMLButtonElement;
+  }[] = [];
+  let labels = new Map<string, string>();
+  let disabled = false;
+  const values = () => rows.map((row) => row.input.value);
   const resolved = () => resolveLinkValues(values());
-  const getMinimum = () => {
-    const text = minimum.value.trim();
-    return resolveTopicMinimum(text ? Number(text) : undefined);
+  const identity = (value: string) => {
+    try {
+      return linkIdentity(parseLink(value));
+    } catch {
+      return '';
+    }
   };
 
   function readLinks(revealError = true) {
@@ -44,28 +45,36 @@ export function createPollForm({
     } catch (error) {
       if (revealError) {
         details.open = true;
-        if (error instanceof PollLinkError) fields[error.index].focus();
+        if (error instanceof PollLinkError) rows[error.index].input.focus();
       }
       if (error instanceof PollLinkError)
-        throw new UserFacingError(`${POLL_LABELS[POLL_KINDS[error.index]]}: ${error.message}`);
+        throw new UserFacingError(`${rows[error.index].caption.textContent}: ${error.message}`);
       throw error;
     }
   }
 
   function updateSuggestions() {
     const links = resolved();
-    fields.forEach((field, index) => {
-      field.placeholder =
+    rows.forEach((row, index) => {
+      const label = labels.get(identity(links[index])) || `Poll ${index + 1}`;
+      row.caption.textContent = label;
+      row.input.setAttribute('aria-label', `${label} link`);
+      row.remove.setAttribute('aria-label', `Remove ${label}`);
+      row.remove.disabled = disabled;
+      row.remove.setAttribute(
+        'aria-disabled',
+        String(disabled || (rows.length === 1 && !row.input.value.trim())),
+      );
+      row.input.placeholder =
         links[index] || (index === 0 ? 'https://t.me/group/123' : 'Next message, or paste a link');
-      field.setAttribute('aria-describedby', `linkHint${index}`);
-      $(`linkHint${index}`).textContent =
+      row.hint.textContent =
         index === 0
-          ? 'Start with the topic poll.'
-          : !field.value.trim() && links[index]
+          ? 'Paste a link to any poll.'
+          : !row.input.value.trim() && links[index]
             ? 'Automatic · next message after the previous poll.'
             : 'Leave blank to use the next message.';
     });
-    clear.hidden = fields.filter((field) => field.value.trim()).length < 2;
+    clear.hidden = !rows.some((row) => row.input.value.trim());
     let configured = false;
     try {
       readLinks(false);
@@ -73,74 +82,102 @@ export function createPollForm({
     } catch {
       /* Incomplete input stays editable. */
     }
-    $('pollLinksCount').textContent = configured ? ' · 4 polls' : '';
+    $('pollLinksCount').textContent = configured
+      ? ` · ${rows.length} ${rows.length === 1 ? 'poll' : 'polls'}`
+      : '';
     return configured;
   }
 
-  function persist() {
-    const saved = preferences.writePreferences({ links: values(), topicMinimum: getMinimum() });
-    $('preferencesHint').textContent = saved
-      ? 'Links and topic minimum are saved in this browser.'
-      : 'Browser storage is unavailable. These settings will not survive a reload.';
+  function changed() {
+    updateSuggestions();
+    onLinksChange();
   }
 
-  fields.forEach((field) =>
-    field.addEventListener('input', () => {
-      updateSuggestions();
-      persist();
-      onLinksChange();
-    }),
-  );
-  fields.forEach((field) =>
-    field.addEventListener('invalid', () => {
-      details.open = true;
-    }),
-  );
-  clear.addEventListener('click', () => {
-    details.open = true;
-    fields.forEach((field) => {
-      field.value = '';
+  function renderFields(links: readonly string[]) {
+    $('pollLinkFields').replaceChildren();
+    rows = links.map((value, index) => {
+      const row = element('div', 'poll-link');
+      const label = element('label');
+      const caption = element('span', 'poll-title');
+      const input = element('input');
+      input.id = `link${index}`;
+      input.type = 'url';
+      input.value = value;
+      input.required = index === 0;
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      input.disabled = disabled;
+      const hint = element('span', 'field-hint');
+      hint.id = `linkHint${index}`;
+      input.setAttribute('aria-describedby', hint.id);
+      label.append(
+        element('span', 'num', String(index + 1).padStart(2, '0')),
+        caption,
+        input,
+        hint,
+      );
+      const remove = element('button', 'text remove-poll', 'Remove');
+      remove.type = 'button';
+      remove.addEventListener('click', () => {
+        if (disabled) return;
+        if (rows.length === 1) {
+          if (!input.value.trim()) return;
+          input.value = '';
+          changed();
+          remove.focus();
+          return;
+        }
+        const remaining = values().filter((_, position) => position !== index);
+        renderFields(remaining);
+        changed();
+        rows[Math.min(index, rows.length - 1)].remove.focus();
+      });
+      input.addEventListener('input', changed);
+      input.addEventListener('invalid', () => {
+        details.open = true;
+      });
+      row.append(label, remove);
+      $('pollLinkFields').append(row);
+      return { input, caption, hint, remove };
     });
     updateSuggestions();
-    persist();
-    onLinksChange();
-    fields[0].focus();
+  }
+
+  add.addEventListener('click', () => {
+    renderFields([...values(), '']);
+    changed();
+    add.focus({ preventScroll: true });
   });
-  minimum.addEventListener('input', () => {
-    persist();
-    onMinimumChange();
+  clear.addEventListener('click', () => {
+    details.open = true;
+    rows.forEach((row) => {
+      row.input.value = '';
+    });
+    changed();
+    rows[0].input.focus();
   });
-  minimum.addEventListener('change', () => {
-    minimum.value = String(getMinimum());
-    persist();
-    // Input already updated the results. Replacing them again on blur would
-    // remove the participant button receiving keyboard or pointer focus.
-  });
+  renderFields(links);
   details.open = !updateSuggestions();
 
   return {
-    getMinimum,
-    identities: () =>
-      resolved().map((value) => {
-        try {
-          return linkIdentity(parseLink(value));
-        } catch {
-          return '';
-        }
-      }),
+    values,
+    identities: () => resolved().map(identity),
     readLinks: () => readLinks(),
+    setPolls(polls: readonly Poll[]) {
+      const titles = pollLabels(polls);
+      labels = new Map(polls.map((poll, index) => [poll.id, titles[index]]));
+      updateSuggestions();
+    },
     collapse() {
-      if (
-        fields.some((field) => field === document.activeElement) ||
-        document.activeElement === clear
-      )
-        $('pollLinksToggle').focus();
+      if (details.contains(document.activeElement)) $('pollLinksToggle').focus();
       details.open = false;
     },
-    setDisabled(disabled: boolean) {
-      [...fields, clear].forEach((control) => {
-        control.disabled = disabled;
+    setDisabled(value: boolean) {
+      disabled = value;
+      [...rows.flatMap((row) => [row.input, row.remove]), clear, add].forEach((control) => {
+        control.disabled = value;
       });
+      updateSuggestions();
     },
   };
 }

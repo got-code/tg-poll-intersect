@@ -1,5 +1,3 @@
-export const POLL_KINDS = ['topic', 'date', 'time', 'place'] as const;
-export type PollKind = (typeof POLL_KINDS)[number];
 export type ParticipantNames = Record<string, string>;
 
 export interface PollOption {
@@ -8,6 +6,7 @@ export interface PollOption {
 }
 
 export interface Poll {
+  id: string;
   title?: string;
   options: PollOption[];
   votedAt?: Record<string, number | null>;
@@ -19,7 +18,7 @@ export interface PollData {
 }
 
 export interface PersonVote {
-  kind: PollKind;
+  pollId: string;
   voted: boolean;
   at: number | null;
 }
@@ -35,15 +34,13 @@ export interface GroupOption extends Intersection {
 }
 
 export interface PollSection {
-  kind: Exclude<PollKind, 'date'>;
+  pollId: string;
   options: GroupOption[];
 }
 
-export interface DateGroup extends Intersection {
-  date: string;
+export interface PollGroup extends Intersection {
+  pollId: string;
+  option: string;
   votesByPerson: Record<string, PersonVote[]>;
-  bestTopicCount: number;
-  bestTopicExplicitCount: number;
-  bestTopicImplicitCount: number;
   sections: PollSection[];
 }

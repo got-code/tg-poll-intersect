@@ -78,6 +78,9 @@ class Node {
   get src() {
     return this.attributes.src;
   }
+  contains(node) {
+    return node === this || this.children.some((child) => child.contains?.(node));
+  }
   focus() {}
   showModal() {
     this.open = true;
@@ -144,6 +147,10 @@ function app(values = new Map(), options = {}) {
       };
     },
   };
+  const findNode = (node, id) =>
+    node.id === id ? node : node.children?.map((child) => findNode(child, id)).find(Boolean);
+  const $ = (id) =>
+    nodes.get(id) ?? [...nodes.values()].map((node) => findNode(node, id)).find(Boolean);
   runInNewContext(compiled.outputFiles[0].text, {
     hooks,
     crypto: webcrypto,
@@ -172,15 +179,14 @@ function app(values = new Map(), options = {}) {
     },
     document: {
       getElementById: (id) => {
-        assert.ok(nodes.has(id), `Missing DOM element: ${id}`);
-        return nodes.get(id);
+        assert.ok($(id), `Missing DOM element: ${id}`);
+        return $(id);
       },
       createElement: (tag) => new Node(tag),
       createTextNode: (text) => ({ textContent: text }),
       body: new Node('body'),
     },
   });
-  const $ = (id) => nodes.get(id);
   return {
     $,
     values,
@@ -388,32 +394,149 @@ test('QR network failure clears the code and allows a fresh attempt', async () =
   assert.equal(view.values.has(SESSION_KEY), false);
 });
 
-test('global topic filter starts at three, rerenders without Telegram, and disables export when no dates qualify', async () => {
+test('demo filters rerender without Telegram and never persist temporary view settings', async () => {
   const view = app();
-  assert.equal(view.$('topicMinimum').value, '3');
+  assert.equal(view.$('minimumParticipants').value, '3');
   await view.$('demo').emit('click');
   assert.equal(view.$('rows').children.length, 10);
   assert.equal(view.$('export').disabled, false);
-  view.$('topicMinimum').value = '11';
-  await view.$('topicMinimum').emit('input');
+  view.$('minimumParticipants').value = '11';
+  await view.$('minimumParticipants').emit('input');
   assert.equal(view.$('rows').children.length, 0);
   assert.equal(view.$('export').disabled, true);
   assert.equal(view.$('empty').hidden, false);
-  assert.match(view.$('empty').children[0].textContent, /at least 11 people/);
-  view.$('topicMinimum').value = '0';
-  await view.$('topicMinimum').emit('input');
+  assert.match(view.$('empty').children[0].textContent, /participant minimum/);
+  view.$('minimumParticipants').value = '0';
+  await view.$('minimumParticipants').emit('input');
   assert.equal(view.$('rows').children.length, 10);
   assert.equal(view.$('export').disabled, false);
-  assert.equal(app(view.values).$('topicMinimum').value, '0');
+  assert.equal(view.values.has(PREFERENCES_KEY), false);
+  assert.equal(app(view.values).$('minimumParticipants').value, '3');
 });
 
-test('one link submits four inferred polls, persists only manual input, and detects changes to effective links', async () => {
+test('help defaults depend only on saved links and remain manual during loading and demo', async () => {
+  const blank = app();
+  assert.equal(blank.$('viewHelp').open, true);
+  blank.$('viewHelp').open = false;
+  await blank.$('viewHelp').emit('toggle');
+  assert.equal(blank.values.has(PREFERENCES_KEY), false);
+  assert.equal(app(blank.values).$('viewHelp').open, true);
+
+  const view = app(new Map(), {
+    pollData: {
+      names: { 1: 'First', 2: 'Second', 3: 'Third' },
+      polls: [{ id: 'live:1', options: [{ text: 'Answer', voters: ['1', '2', '3'] }] }],
+    },
+  });
+  view.$('link0').value = 'https://t.me/groupchat/123';
+  await view.$('link0').emit('input');
+  assert.equal(view.$('viewHelp').open, true);
+  await view.login(false);
+  await view.$('pollForm').emit('submit');
+  assert.equal(view.$('viewHelp').open, true);
+  const stored = view.values.get(PREFERENCES_KEY);
+
+  view.$('viewHelp').open = false;
+  await view.$('viewHelp').emit('toggle');
+  assert.equal(view.$('groupBy').attributes['aria-describedby'], undefined);
+  assert.equal(view.$('filterBy').attributes['aria-describedby'], undefined);
+  view.$('viewHelp').open = true;
+  await view.$('viewHelp').emit('toggle');
+  assert.equal(view.$('groupBy').attributes['aria-describedby'], 'groupByHint');
+  assert.equal(view.$('filterBy').attributes['aria-describedby'], 'filterByHint');
+  await view.$('demoExample').emit('click');
+  assert.equal(view.$('viewHelp').open, true);
+  assert.equal(view.$('groupBy').value, 'demo:2');
+  assert.equal(view.$('filterBy').value, 'poll:demo:1');
+  assert.equal(view.$('minimumParticipants').value, '3');
+  assert.equal(view.values.get(PREFERENCES_KEY), stored);
+  assert.equal(app(view.values).$('viewHelp').open, false);
+  const emptyLinks = new Map([[PREFERENCES_KEY, JSON.stringify({ links: ['', '', ''] })]]);
+  assert.equal(app(emptyLinks).$('viewHelp').open, true);
+});
+
+test('demo presets and edits stay separate from live settings through source edits, reload, failure and return', async () => {
+  const data = demo();
+  data.polls = data.polls.map((poll, index) => ({
+    ...poll,
+    id: `live:${index + 1}`,
+    title: `Live poll ${index + 1}`,
+  }));
+  const options = { pollData: data };
+  const initial = {
+    links: ['https://t.me/groupchat/123', '', '', ''],
+    groupBy: 'live:4',
+    filterBy: { pollId: 'live:3' },
+    minimumParticipants: 2,
+  };
+  const view = app(new Map([[PREFERENCES_KEY, JSON.stringify(initial)]]), options);
+  await view.login(false);
+  await view.$('pollForm').emit('submit');
+  view.$('groupBy').value = 'live:3';
+  await view.$('groupBy').emit('change');
+  view.$('filterBy').value = 'poll:live:1';
+  await view.$('filterBy').emit('change');
+  view.$('minimumParticipants').value = '4';
+  await view.$('minimumParticipants').emit('input');
+  const live = JSON.parse(view.values.get(PREFERENCES_KEY));
+  const stored = view.values.get(PREFERENCES_KEY);
+
+  await view.$('demo').emit('click');
+  assert.equal(view.$('groupBy').value, 'demo:2');
+  assert.equal(view.$('filterBy').value, 'poll:demo:1');
+  assert.equal(view.$('minimumParticipants').value, '3');
+  assert.equal(view.$('resultHeading').textContent, 'By “Which date?”');
+  view.$('groupBy').value = 'demo:3';
+  await view.$('groupBy').emit('change');
+  view.$('filterBy').value = 'poll:demo:4';
+  await view.$('filterBy').emit('change');
+  view.$('minimumParticipants').value = '8';
+  await view.$('minimumParticipants').emit('input');
+  assert.equal(view.values.get(PREFERENCES_KEY), stored);
+  const reloaded = app(view.values);
+  assert.equal(reloaded.$('minimumParticipants').value, '4');
+
+  view.$('link0').value = 'https://t.me/groupchat/223';
+  await view.$('link0').emit('input');
+  const edited = { ...live, links: ['https://t.me/groupchat/223', '', '', ''] };
+  assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)), edited);
+  await view.$('demo').emit('click');
+  assert.equal(view.$('groupBy').value, 'demo:2');
+  assert.equal(view.$('minimumParticipants').value, '3');
+  assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)), edited);
+
+  view.$('minimumParticipants').value = '6';
+  await view.$('minimumParticipants').emit('input');
+  delete options.pollData;
+  await view.$('pollForm').emit('submit');
+  assert.match(view.$('status').textContent, /Unexpected poll request/);
+  assert.equal(view.$('demoLabel').hidden, false);
+  assert.equal(view.$('minimumParticipants').value, '6');
+  assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)), edited);
+
+  options.pollData = data;
+  await view.$('pollForm').emit('submit');
+  assert.equal(view.$('groupBy').value, live.groupBy);
+  assert.equal(view.$('filterBy').value, `poll:${live.filterBy.pollId}`);
+  assert.equal(view.$('minimumParticipants').value, String(live.minimumParticipants));
+  assert.equal(view.$('demoLabel').hidden, true);
+  assert.equal(view.$('resultHeading').textContent, 'By “Live poll 3”');
+  assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)), edited);
+
+  await view.$('demo').emit('click');
+  await view.$('disconnect').emit('click');
+  assert.equal(view.$('minimumParticipants').value, '4');
+  assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)), edited);
+});
+
+test('added rows submit inferred polls, persists only manual input, and detects changes to effective links', async () => {
   const view = app(new Map(), { pollData: demo() });
+  for (let i = 1; i < 4; i++) await view.$('addPoll').emit('click');
   view.$('link0').value = 'https://t.me/groupchat/123';
   await view.$('link0').emit('input');
   assert.equal(view.$('link1').placeholder, 'https://t.me/groupchat/124');
   assert.equal(view.$('link3').placeholder, 'https://t.me/groupchat/126');
-  assert.equal(view.$('clearLinks').hidden, true);
+  assert.equal(view.$('clearLinks').hidden, false);
   const reloaded = app(view.values);
   assert.equal(reloaded.$('link3').value, '');
   assert.equal(reloaded.$('link3').placeholder, 'https://t.me/groupchat/126');
@@ -445,6 +568,7 @@ test('one link submits four inferred polls, persists only manual input, and dete
 test('failed refreshes preserve the disclosure state; only a successful refresh collapses it', async () => {
   const options = { pollData: demo() };
   const view = app(new Map(), options);
+  for (let i = 1; i < 4; i++) await view.$('addPoll').emit('click');
   view.$('link0').value = 'https://t.me/groupchat/123';
   await view.$('link0').emit('input');
   await view.login(false);
@@ -461,26 +585,28 @@ test('failed refreshes preserve the disclosure state; only a successful refresh 
 
 test('manual overrides restart suggestions; duplicate polls are rejected before login', async () => {
   const view = app();
+  for (let i = 1; i < 4; i++) await view.$('addPoll').emit('click');
   view.$('link0').value = 'https://t.me/groupchat/123';
   view.$('link2').value = 'https://t.me/anotherchat/500';
   await view.$('link2').emit('input');
   assert.equal(view.$('link3').placeholder, 'https://t.me/anotherchat/501');
   view.$('link2').value = 'https://telegram.me/GROUPCHAT/123?single';
   await view.$('pollForm').emit('submit');
-  assert.match(view.$('status').textContent, /four different/);
+  assert.match(view.$('status').textContent, /different poll messages/);
   assert.equal(view.$('login').open, false);
 });
 
 test('corrupt preferences and denied storage do not prevent use', async () => {
   const corrupt = app(new Map([[PREFERENCES_KEY, '{broken']]));
-  assert.equal(corrupt.$('topicMinimum').value, '3');
-  const invalid = app(new Map([[PREFERENCES_KEY, '{"links":[1,2,3,4],"topicMinimum":-2}']]));
+  assert.equal(corrupt.$('minimumParticipants').value, '3');
+  const invalid = app(new Map([[PREFERENCES_KEY, '{"links":[1,2,3,4],"minimumParticipants":-2}']]));
   assert.equal(invalid.$('link0').value, '');
-  assert.equal(invalid.$('topicMinimum').value, '3');
+  assert.equal(invalid.$('minimumParticipants').value, '3');
   const denied = app(new Map(), { denyWrites: true });
   denied.$('link0').value = 'https://t.me/groupchat/123';
   await denied.$('link0').emit('input');
-  assert.equal(denied.$('link3').placeholder, 'https://t.me/groupchat/126');
+  await denied.$('addPoll').emit('click');
+  assert.equal(denied.$('link1').placeholder, 'https://t.me/groupchat/124');
   assert.match(denied.$('preferencesHint').textContent, /storage is unavailable/);
 });
 
@@ -505,7 +631,7 @@ test('login remains memory-only when saving is declined or storage fails', async
 test('forgetting only removes encrypted session; cancelled asynchronous saving cannot write later', async () => {
   const values = new Map([
     [SESSION_KEY, 'damaged-envelope'],
-    ['poll-intersections.preferences.v1', '{"links":["a","b","c","d"],"topicMinimum":3}'],
+    ['poll-intersections.preferences.v1', '{"links":["a","b","c","d"],"minimumParticipants":3}'],
   ]);
   const forgotten = app(values);
   await forgotten.$('connect').emit('click');

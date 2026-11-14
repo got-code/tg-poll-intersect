@@ -1,4 +1,4 @@
-import { defaultPreferences, resolveTopicMinimum } from '../application/preferences.ts';
+import { defaultPreferences, resolveParticipantMinimum } from '../application/preferences.ts';
 import { isRecord } from '../../../infrastructure/validation.ts';
 import type { Preferences } from '../application/preferences.ts';
 
@@ -13,12 +13,22 @@ export function readPreferences(): Preferences {
       links:
         'links' in saved &&
         Array.isArray(saved.links) &&
-        saved.links.length === defaults.links.length &&
+        saved.links.length > 0 &&
         saved.links.every((value: unknown) => typeof value === 'string')
           ? saved.links
           : defaults.links,
-      topicMinimum: resolveTopicMinimum(
-        typeof saved.topicMinimum === 'number' ? saved.topicMinimum : undefined,
+      groupBy:
+        typeof saved.groupBy === 'string' && saved.groupBy ? saved.groupBy : defaults.groupBy,
+      filterBy:
+        saved.filterBy === 'none' || saved.filterBy === 'grouping'
+          ? saved.filterBy
+          : isRecord(saved.filterBy) &&
+              typeof saved.filterBy.pollId === 'string' &&
+              saved.filterBy.pollId
+            ? { pollId: saved.filterBy.pollId }
+            : defaults.filterBy,
+      minimumParticipants: resolveParticipantMinimum(
+        typeof saved.minimumParticipants === 'number' ? saved.minimumParticipants : undefined,
       ),
     };
   } catch {

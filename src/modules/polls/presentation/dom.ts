@@ -1,21 +1,24 @@
 import { elements } from '../../../presentation/dom.ts';
 
-type InputId = `link${number}` | 'topicMinimum';
-type ButtonId = 'refresh' | 'demo' | 'export' | 'clearLinks';
+type ButtonId = 'refresh' | 'demo' | 'demoExample' | 'export' | 'clearLinks' | 'addPoll';
 type TextId =
-  | `linkHint${number}`
   | 'pollLinksToggle'
   | 'pollLinksCount'
+  | 'pollLinkFields'
   | 'preferencesHint'
+  | 'resultHeading'
   | 'resultMeta'
   | 'empty'
   | 'demoLabel'
   | 'resultFooter'
   | 'rows';
-type PollElements = Record<InputId, HTMLInputElement> &
-  Record<ButtonId, HTMLButtonElement> &
+type PollElements = Record<ButtonId, HTMLButtonElement> &
   Record<TextId, HTMLElement> & {
+    minimumParticipants: HTMLInputElement;
+    groupBy: HTMLSelectElement;
+    filterBy: HTMLSelectElement;
     pollForm: HTMLFormElement;
     pollLinks: HTMLDetailsElement;
+    viewHelp: HTMLDetailsElement;
   };
 export const $ = elements<PollElements>();

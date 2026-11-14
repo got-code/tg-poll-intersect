@@ -1,18 +1,18 @@
 import type { PollData } from '../domain/models.ts';
 
 export function demo(): PollData {
-  const names = {
-    '1': 'Alex',
-    '2': 'Morgan Lee',
-    '3': 'Anna Maria Silva',
-    '4': 'Sam Patel',
-    '5': 'Pat',
-    '6': 'Chris van Dijk',
-    '7': 'Robin Chen',
-    '8': 'Noor Ali Hassan',
-    '9': 'Sasha',
-    '10': 'Jamie de Vries',
-  };
+  const people = [
+    ['user:18472963', 'Alex'],
+    ['user:492816307', 'Morgan Lee'],
+    ['user:6842051937', 'Anna Maria Silva'],
+    ['user:278461905', 'Sam Patel'],
+    ['user:7531908624', 'Pat'],
+    ['user:938421756', 'Chris van Dijk'],
+    ['user:261839470', 'Robin Chen'],
+    ['user:4391762085', 'Noor Ali Hassan'],
+    ['user:9826417350', 'Sasha'],
+    ['user:3567829012345678', 'Jamie de Vries'],
+  ] as const;
   const definitions: [string, [string, number[]][]][] = [
     [
       'What shall we discuss?',
@@ -63,18 +63,21 @@ export function demo(): PollData {
   ];
   const start = Date.UTC(2026, 10, 12, 8) / 1000;
   return {
-    names,
+    names: Object.fromEntries(people),
     polls: definitions.map(([title, entries], index) => {
-      const options = entries.map(([text, voters]) => ({ text, voters: voters.map(String) }));
-      const voters = [...new Set(options.flatMap((option) => option.voters))];
+      const options = entries.map(([text, voters]) => ({
+        text,
+        voters: voters.map((person) => people[person - 1][0]),
+      }));
+      const voters = [...new Set(entries.flatMap(([, voters]) => voters))];
       const votedAt = Object.fromEntries(
-        voters.map((id) => [
-          id,
+        voters.map((person) => [
+          people[person - 1][0],
           // A known vote without a timestamp is distinct from not answering a poll.
-          index === 0 && id === '8' ? null : start + index * 21600 + Number(id) * 1020,
+          index === 0 && person === 8 ? null : start + index * 21600 + person * 1020,
         ]),
       );
-      return { title, options, votedAt };
+      return { id: `demo:${index + 1}`, title, options, votedAt };
     }),
   };
 }

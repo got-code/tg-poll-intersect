@@ -6,6 +6,7 @@ import { withTelegramErrors } from '../../../infrastructure/telegram/errors.ts';
 import type { BaseTelegramClient, Poll as TelegramPoll } from '@mtcute/web';
 import type { ParticipantNames, Poll, PollData } from '../domain/models.ts';
 import type { PollLink } from '../application/links.ts';
+import { linkIdentity } from '../application/links.ts';
 import type { PollProgress } from '../application/source.ts';
 
 async function findPeer(client: BaseTelegramClient, peer: PollLink['peer']) {
@@ -108,7 +109,7 @@ export function fetchPolls(
         options.push({ text: answer.text, voters: voters.ids });
       }
       checks.push({ peer, messageId, fingerprint: fingerprint(poll) });
-      polls.push({ title: poll.question, options, votedAt });
+      polls.push({ id: linkIdentity(links[i]), title: poll.question, options, votedAt });
     }
     progress({ kind: 'checking' });
     for (const check of checks) {

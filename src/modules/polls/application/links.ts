@@ -1,5 +1,4 @@
 import { UserFacingError } from '../../../application/errors.ts';
-import { POLL_KINDS } from '../domain/models.ts';
 
 export interface PollLink {
   peer: { kind: 'username'; name: string } | { kind: 'channel'; id: number };
@@ -90,14 +89,13 @@ export function linkIdentity(link: PollLink) {
 }
 
 export function readPollLinks(values: readonly string[]): PollLink[] {
-  if (values.length !== POLL_KINDS.length)
-    throw new UserFacingError('Four poll links are required.');
+  if (!values.length) throw new UserFacingError('At least one poll link is required.');
   const seen = new Set<string>();
   return resolveLinkValues(values).map((value, index) => {
     try {
       const link = parseLink(value);
       const identity = linkIdentity(link);
-      if (seen.has(identity)) throw new UserFacingError('Choose four different poll messages.');
+      if (seen.has(identity)) throw new UserFacingError('Choose different poll messages.');
       seen.add(identity);
       return link;
     } catch (error) {

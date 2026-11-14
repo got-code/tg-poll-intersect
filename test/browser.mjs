@@ -18,6 +18,7 @@ const fixture = await build({
     loader: 'js',
     contents: `
     import { mountTestApp } from './test/fixtures/app.mjs';
+    import { linkIdentity } from './src/modules/polls/application/links.ts';
     import { PasswordRequiredError } from './src/application/errors.ts';
     window.requirePassword = () => window.qrTest.reject(new PasswordRequiredError());
     mountTestApp({
@@ -41,10 +42,12 @@ const fixture = await build({
         },
         me: async () => ({displayName:'Test'}), logout: async () => {},
       },
-      fetchPolls: () => {
+      fetchPolls: (client, links) => {
         if (!window.allowPollFetch) throw new Error('Unexpected poll request');
         if (window.pollRequestError) throw new Error('Synthetic request failure');
-        return {names:{'1':'First', '2':'Second', '3':'Third'}, polls:Array.from({length:4}, () => ({options:[{text:'Synthetic option', voters:['1','2','3']}]}))};
+        window.pollFetchCount = (window.pollFetchCount || 0) + 1;
+        window.lastPollIds = links.map(linkIdentity);
+        return {names:{'1':'First', '2':'Second', '3':'Third'}, polls:links.map((link, index) => ({...window.pollFixtures?.[index], id:linkIdentity(link), title:window.pollFixtures?.[index]?.title ?? 'Synthetic question ' + (index + 1), options:window.pollFixtures?.[index]?.options ?? [{text:'Synthetic option', voters:['1','2','3']}]}))};
       },
     });
   `,
@@ -118,7 +121,7 @@ async function checkLazyTelegram() {
   try {
     await page.goto(origin);
     await page.locator('#demo').click();
-    assert.equal(await page.locator('.date-card').count(), 10);
+    assert.equal(await page.locator('.group-card').count(), 10);
     assert.equal(
       requests.some(
         (url) => url.endsWith(authAsset) || url.endsWith(pollAsset) || url.endsWith('.wasm'),
@@ -253,16 +256,124 @@ async function checkTextContrast(page) {
   for (const [name, ratio] of Object.entries(ratios))
     assert.ok(ratio >= 4.5, `${name} contrast ${ratio}:1 is below 4.5:1`);
 }
+async function checkHelpDisclosure(page) {
+  const help = page.locator('#viewHelp');
+  const toggle = page.locator('#viewHelpToggle');
+  assert.equal(await help.evaluate((node) => node.open), true);
+  const stored = await page.evaluate(() =>
+    localStorage.getItem('poll-intersections.preferences.v1'),
+  );
+  await toggle.click();
+  assert.equal(await help.evaluate((node) => node.open), false);
+  assert.equal(await page.locator('#filterExample').isVisible(), false);
+  await page.waitForFunction(
+    () => !document.getElementById('filterBy').hasAttribute('aria-describedby'),
+  );
+  await toggle.press('Enter');
+  assert.equal(await help.evaluate((node) => node.open), true);
+  assert.equal(await page.locator('#filterExample').isVisible(), true);
+  await page.waitForFunction(
+    () => document.getElementById('filterBy').getAttribute('aria-describedby') === 'filterByHint',
+  );
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('poll-intersections.preferences.v1')),
+    stored,
+  );
+}
+
+async function checkRepeatedPollActions(page) {
+  const add = page.locator('#addPoll');
+  const removes = page.locator('.remove-poll');
+  const fields = page.locator('.poll-link');
+  const focused = (locator) => locator.evaluate((node) => document.activeElement === node);
+  await add.scrollIntoViewIfNeeded();
+  const addBox = await add.boundingBox();
+  assert.ok(addBox);
+  let count = await fields.count();
+  for (let i = 0; i < 6; i++) {
+    await page.mouse.click(addBox.x + addBox.width / 2, addBox.y + addBox.height / 2);
+    assert.equal(await fields.count(), ++count);
+    assert.equal(await focused(add), true);
+    const box = await add.boundingBox();
+    assert.equal(box.x, addBox.x);
+    assert.equal(box.y, addBox.y);
+  }
+  for (const key of ['Enter', 'Enter', 'Space', 'Space']) {
+    await page.keyboard.press(key);
+    assert.equal(await fields.count(), ++count);
+    assert.equal(await focused(add), true);
+  }
+
+  await removes.nth(1).scrollIntoViewIfNeeded();
+  const removeBox = await removes.nth(1).boundingBox();
+  assert.ok(removeBox);
+  for (let i = 0; i < 3; i++) {
+    await page.mouse.click(removeBox.x + removeBox.width / 2, removeBox.y + removeBox.height / 2);
+    assert.equal(await fields.count(), --count);
+    assert.equal(await focused(removes.nth(1)), true);
+  }
+
+  await removes.last().focus();
+  for (const key of ['Enter', 'Space']) {
+    await page.keyboard.press(key);
+    assert.equal(await fields.count(), --count);
+    assert.equal(await focused(removes.last()), true);
+  }
+  while (count > 1) {
+    await page.keyboard.press('Enter');
+    assert.equal(await fields.count(), --count);
+    assert.equal(await focused(removes.last()), true);
+  }
+  assert.equal(await removes.isDisabled(), true);
+  assert.equal(await removes.evaluate((button) => button.disabled), false);
+  for (const key of ['Enter', 'Space', 'Enter']) await page.keyboard.press(key);
+  const lastBox = await removes.boundingBox();
+  await page.mouse.click(lastBox.x + lastBox.width / 2, lastBox.y + lastBox.height / 2);
+  assert.equal(await fields.count(), 1);
+  assert.equal(await focused(removes), true);
+  assert.equal(await page.locator('#login').isVisible(), false);
+  for (const trigger of ['Enter', 'Space', 'mouse']) {
+    await page.locator('#link0').fill('https://t.me/groupchat/123');
+    assert.equal(await removes.isDisabled(), false);
+    await removes.focus();
+    if (trigger === 'mouse') {
+      const box = await removes.boundingBox();
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    } else {
+      await page.keyboard.press(trigger);
+    }
+    assert.equal(await fields.count(), 1);
+    assert.equal(await page.locator('#link0').inputValue(), '');
+    assert.equal(await focused(removes), true);
+    assert.equal(await removes.isDisabled(), true);
+    await page.keyboard.press('Enter');
+    assert.equal(await fields.count(), 1);
+    assert.deepEqual(
+      await page.evaluate(
+        () => JSON.parse(localStorage.getItem('poll-intersections.preferences.v1')).links,
+      ),
+      [''],
+    );
+  }
+  await page.reload();
+  assert.equal(await fields.count(), 1);
+  assert.equal(await page.locator('#link0').inputValue(), '');
+  assert.equal(await removes.isDisabled(), true);
+}
+
 async function checkLinkDisclosure(page, width) {
   const details = page.locator('#pollLinks');
   const toggle = page.locator('#pollLinksToggle');
   assert.equal(await details.evaluate((node) => node.open), true);
+  await checkHelpDisclosure(page);
+  await checkRepeatedPollActions(page);
   await page.locator('#link0').fill('https://t.me/groupchat/123');
+  assert.equal(await page.locator('#viewHelp').evaluate((node) => node.open), true);
   assert.equal(await details.evaluate((node) => node.open), true);
   await toggle.click();
   assert.equal(await page.locator('#link0').isVisible(), false);
   assert.equal(await page.locator('.links-edit').isVisible(), true);
-  assert.equal(await page.locator('#pollLinksCount').innerText(), ' · 4 polls');
+  assert.equal(await page.locator('#pollLinksCount').innerText(), ' · 1 poll');
   assert.equal(await page.locator('#refresh').isVisible(), true);
   assert.equal(await page.locator('#demo').isVisible(), true);
   const box = await toggle.boundingBox();
@@ -271,6 +382,16 @@ async function checkLinkDisclosure(page, width) {
   assert.equal(await page.locator('#link0').isVisible(), true);
   await page.reload();
   assert.equal(await details.evaluate((node) => node.open), false);
+  assert.equal(await page.locator('#viewHelp').evaluate((node) => node.open), false);
+  const stored = await page.evaluate(() =>
+    localStorage.getItem('poll-intersections.preferences.v1'),
+  );
+  await page.locator('#viewHelpToggle').click();
+  assert.equal(await page.locator('#viewHelp').evaluate((node) => node.open), true);
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('poll-intersections.preferences.v1')),
+    stored,
+  );
   await toggle.click();
   if (width === 320) {
     await page.locator('#link0').fill('bad');
@@ -290,6 +411,7 @@ async function checkLinkDisclosure(page, width) {
       true,
     );
     await page.locator('#link0').fill('https://t.me/groupchat/123');
+    await page.locator('#addPoll').click();
     await page.locator('#link1').fill('https://t.me/groupchat/123');
     await toggle.click();
     assert.equal(await page.locator('#clearLinks').isVisible(), false);
@@ -334,6 +456,7 @@ async function checkRefreshCollapse(page) {
     assert.equal(await page.locator('#pollLinks').evaluate((node) => node.open), open);
   }
   await page.locator('#pollLinksToggle').click();
+  await page.locator('#addPoll').click();
   await page.locator('#link1').fill('https://t.me/groupchat/124');
   await page.locator('#clearLinks').click();
   assert.equal(await page.locator('#pollLinks').evaluate((node) => node.open), true);
@@ -349,28 +472,55 @@ async function downloadCsv(page, filename) {
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
   const content = Buffer.concat(chunks).toString('utf8');
-  assert.ok(content.startsWith('\uFEFF"Date","Section","Option","Total","Explicit","Implicit"'));
+  assert.ok(
+    content.startsWith(
+      '\uFEFF"Grouping poll","Group answer","Poll","Option","Total","Explicit","Implicit"',
+    ),
+  );
   assert.ok(!content.includes('Telegram ID'));
   return content;
 }
 async function checkDemo(page, width, timeZone) {
-  await page.locator('#demo').click();
-  assert.equal(await page.locator('.date-card').count(), 10);
-  await page.locator('#topicMinimum').fill('0');
-  assert.equal(await page.locator('.date-option').count(), 160);
+  const savedPreferences = await page.evaluate(() =>
+    localStorage.getItem('poll-intersections.preferences.v1'),
+  );
+  assert.equal(await page.locator('#viewHelp').evaluate((node) => node.open), true);
+  await page.locator('#demoExample').click();
+  assert.equal(await page.locator('#viewHelp').evaluate((node) => node.open), true);
+  assert.equal(await page.locator('#groupBy').inputValue(), 'demo:2');
+  assert.equal(await page.locator('#filterBy').inputValue(), 'poll:demo:1');
+  assert.equal(await page.locator('#minimumParticipants').inputValue(), '3');
+  assert.equal(await page.locator('.group-card').count(), 10);
+  const example = page
+    .locator('.group-card')
+    .filter({ has: page.getByRole('heading', { name: '16 November', exact: true }) });
+  const topics = example
+    .locator('.group-section')
+    .filter({ has: page.getByRole('heading', { name: 'What shall we discuss?', exact: true }) });
+  const option = (name) =>
+    topics
+      .locator('.group-option')
+      .filter({ has: page.locator('.option-name', { hasText: new RegExp(`^${name}$`) }) });
+  assert.equal(await option('Books').locator('.option-count').innerText(), '1(+3?)');
+  assert.equal(await option('AI').locator('.option-count').innerText(), '1(+2?)');
+  assert.equal(await option('Science').count(), 0);
+  await page.locator('#minimumParticipants').fill('5');
+  assert.equal(await example.count(), 0);
+  await page.locator('#minimumParticipants').fill('0');
+  assert.equal(await page.locator('.group-option').count(), 160);
   const exported = await downloadCsv(page, 'poll-demo.csv');
   assert.equal(exported.split('\r\n').length, 171);
   assert.ok(exported.includes('Anna Maria Silva'));
-  const card = page.locator('.date-card').first();
-  const attendees = card.locator('.date-attendees');
+  const card = page.locator('.group-card').first();
+  const attendees = card.locator('.group-attendees');
   const anna = attendees.getByRole('button', { name: 'Anna Maria Silva', exact: true });
   const tooltip = page.locator('#personTooltip');
   await anna.focus();
   await tooltip.waitFor({ state: 'visible' });
   const expected =
     timeZone === 'UTC'
-      ? 'Topic — no vote\nDate — 12 Nov, 14:51\nTime — 12 Nov, 20:51\nPlace — 13 Nov, 02:51\nTelegram ID: 3'
-      : 'Topic — no vote\nDate — 12 Nov, 15:51\nTime — 12 Nov, 21:51\nPlace — 13 Nov, 03:51\nTelegram ID: 3';
+      ? '“What shall we discuss?” — no vote\n“Which date?” — 12 Nov, 14:51\n“What time?” — 12 Nov, 20:51\n“Where shall we meet?” — 13 Nov, 02:51\nTelegram ID: 6842051937'
+      : '“What shall we discuss?” — no vote\n“Which date?” — 12 Nov, 15:51\n“What time?” — 12 Nov, 21:51\n“Where shall we meet?” — 13 Nov, 03:51\nTelegram ID: 6842051937';
   assert.equal(await tooltip.innerText(), expected);
   assert.equal(await anna.getAttribute('class'), 'person');
   assert.equal(await anna.getAttribute('aria-describedby'), 'personTooltip');
@@ -393,7 +543,7 @@ async function checkDemo(page, width, timeZone) {
   await tooltip.waitFor({ state: 'hidden' });
 
   const books = card
-    .locator('.date-option')
+    .locator('.group-option')
     .filter({ has: page.locator('.option-name', { hasText: /^Books$/ }) });
   const topicAnna = books.getByRole('button', { name: 'Anna Maria Silva', exact: true });
   if (width < 650) await topicAnna.tap();
@@ -409,50 +559,291 @@ async function checkDemo(page, width, timeZone) {
   await page.keyboard.press('Escape');
   await attendees.getByRole('button', { name: 'Jamie de Vries', exact: true }).focus();
   await tooltip.waitFor({ state: 'visible' });
+  assert.ok((await tooltip.innerText()).endsWith('Telegram ID: 3567829012345678'));
   assert.ok(
     (await tooltip.innerText()).startsWith(
-      'Date — no vote\nTime — no vote\nPlace — no vote\nTopic — ',
+      '“Which date?” — no vote\n“What time?” — no vote\n“Where shall we meet?” — no vote\n“What shall we discuss?” — ',
     ),
   );
   await page.keyboard.press('Escape');
   await page
-    .locator('.date-attendees')
+    .locator('.group-attendees')
     .getByRole('button', { name: 'Noor Ali Hassan', exact: true })
     .first()
     .focus();
   await tooltip.waitFor({ state: 'visible' });
   assert.ok(
     (await tooltip.innerText()).startsWith(
-      'Time — no vote\nPlace — no vote\nTopic — time unavailable\nDate — ',
+      '“What time?” — no vote\n“Where shall we meet?” — no vote\n“What shall we discuss?” — time unavailable\n“Which date?” — ',
     ),
-  );
-  await page.keyboard.press('Escape');
-  await card.locator('.date-count').click();
-  assert.equal(await tooltip.innerText(), '3 people have no vote in Date.\nTotal: 8');
-  await page.keyboard.press('Escape');
-  await card.locator('.best-topic-count').click();
-  assert.equal(
     await tooltip.innerText(),
-    'Largest topic group for this date.\n5 people have no vote in Date or Topic.\nTotal: 7',
   );
+  await page.keyboard.press('Escape');
+  await card.locator('.group-count').click();
+  assert.equal(await tooltip.innerText(), '3 people have no vote in “Which date?”.\nTotal: 8');
   await page.keyboard.press('Escape');
   await books.locator('.option-count').click();
-  assert.equal(await tooltip.innerText(), '5 people have no vote in Date or Topic.\nTotal: 7');
+  assert.equal(
+    await tooltip.innerText(),
+    '5 people have no vote in “Which date?” or “What shall we discuss?”.\nTotal: 7',
+  );
   await page.keyboard.press('Escape');
-  await page.locator('#topicMinimum').fill('11');
-  assert.equal(await page.locator('.date-card').count(), 0);
+  if (width === 320 && timeZone === 'UTC')
+    await page.screenshot({ path: '/tmp/tg-poll-mobile.png', fullPage: true });
+  if (width === 1280 && timeZone !== 'UTC')
+    await page.screenshot({ path: '/tmp/tg-poll-desktop.png', fullPage: true });
+  await page.locator('#minimumParticipants').fill('11');
+  assert.equal(await page.locator('.group-card').count(), 0);
   assert.equal(await page.locator('#export').isDisabled(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.deepEqual(await page.evaluate(() => Object.keys(localStorage)), [
     'poll-intersections.preferences.v1',
   ]);
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('poll-intersections.preferences.v1')),
+    savedPreferences,
+  );
 }
+async function checkRemovalInference(page) {
+  const first = 'https://t.me/groupchat/123';
+  const manual = 'https://t.me/anotherchat/500';
+  const inputValues = () =>
+    page.locator('.poll-link input').evaluateAll((inputs) => inputs.map((input) => input.value));
+  const savedLinks = () =>
+    page.evaluate(
+      () => JSON.parse(localStorage.getItem('poll-intersections.preferences.v1')).links,
+    );
+  await page.locator('#link0').fill(first);
+  for (let i = 1; i < 5; i++) await page.locator('#addPoll').click();
+  await page.locator('#link3').fill(manual);
+
+  await page.locator('.remove-poll').nth(1).click();
+  assert.deepEqual(await inputValues(), [first, '', manual, '']);
+  assert.deepEqual(await savedLinks(), [first, '', manual, '']);
+  assert.equal(
+    await page.locator('#link1').getAttribute('placeholder'),
+    'https://t.me/groupchat/124',
+  );
+  assert.equal(
+    await page.locator('#link3').getAttribute('placeholder'),
+    'https://t.me/anotherchat/501',
+  );
+
+  await page.locator('.remove-poll').last().click();
+  assert.deepEqual(await inputValues(), [first, '', manual]);
+  assert.deepEqual(await savedLinks(), [first, '', manual]);
+
+  await page.locator('.remove-poll').first().click();
+  assert.deepEqual(await inputValues(), ['', manual]);
+  assert.deepEqual(await savedLinks(), ['', manual]);
+
+  await page.locator('#clearLinks').click();
+  await page.locator('.remove-poll').last().click();
+  assert.deepEqual(await inputValues(), ['']);
+  assert.equal(await page.locator('.remove-poll').isDisabled(), true);
+}
+
+async function checkDemoIsolation(page) {
+  const stored = () =>
+    page.evaluate(() => localStorage.getItem('poll-intersections.preferences.v1'));
+  const view = async () => ({
+    groupBy: await page.locator('#groupBy').inputValue(),
+    filterBy: await page.locator('#filterBy').inputValue(),
+    minimum: await page.locator('#minimumParticipants').inputValue(),
+  });
+  const liveView = await view();
+  const before = await stored();
+  await page.locator('#demo').click();
+  assert.deepEqual(await view(), { groupBy: 'demo:2', filterBy: 'poll:demo:1', minimum: '3' });
+  await page.locator('#groupBy').selectOption('demo:3');
+  await page.locator('#filterBy').selectOption('poll:demo:4');
+  await page.locator('#minimumParticipants').fill('8');
+  assert.equal(await stored(), before);
+
+  await page.locator('#pollLinksToggle').click();
+  await page.locator('#link4').fill('https://t.me/groupchat/127');
+  const links = await page
+    .locator('.poll-link input')
+    .evaluateAll((inputs) => inputs.map((input) => input.value));
+  const edited = await stored();
+  assert.deepEqual(JSON.parse(edited), { ...JSON.parse(before), links });
+  await page.locator('#demo').click();
+  assert.deepEqual(await view(), { groupBy: 'demo:2', filterBy: 'poll:demo:1', minimum: '3' });
+  assert.equal(await stored(), edited);
+
+  await page.locator('#minimumParticipants').fill('6');
+  await page.evaluate(() => {
+    window.pollRequestError = true;
+  });
+  await page.locator('#refresh').click();
+  await page.waitForFunction(() =>
+    document.getElementById('status').textContent.includes('Synthetic request failure'),
+  );
+  assert.equal(await page.locator('#demoLabel').isVisible(), true);
+  assert.equal(await page.locator('#minimumParticipants').inputValue(), '6');
+  assert.equal(await stored(), edited);
+
+  await page.evaluate(() => {
+    window.pollRequestError = false;
+  });
+  await page.locator('#refresh').click();
+  await page.locator('#demoLabel').waitFor({ state: 'hidden' });
+  assert.deepEqual(await view(), liveView);
+  assert.equal(await stored(), edited);
+}
+
+async function checkGeneralPolls() {
+  const context = await browser.newContext({ viewport: { width: 390, height: 900 } });
+  const page = await context.newPage();
+  page.on('pageerror', (error) => errors.push(error.message));
+  try {
+    await page.goto(`${origin}/fixture/`);
+    assert.equal(await page.locator('#groupBy').isDisabled(), true);
+    assert.equal(await page.locator('.view-help').isVisible(), true);
+    assert.equal(await page.locator('#filterModes').isVisible(), true);
+    await checkRemovalInference(page);
+    await page.locator('#connect').click();
+    await page.locator('#apiId').fill('12345');
+    await page.locator('#apiHash').fill('abcdef0123456789abcdef0123456789');
+    await page.locator('#phone').fill('+381123456789');
+    await page.locator('#loginSubmit').click();
+    await page.locator('#code').fill('12345');
+    await page.locator('#loginSubmit').click();
+    await page.locator('#login').waitFor({ state: 'hidden' });
+    await page.evaluate(() => {
+      window.allowPollFetch = true;
+    });
+    await page.locator('#link0').fill('https://t.me/groupchat/123');
+    await page.locator('#refresh').click();
+    await page.waitForFunction(
+      () => document.getElementById('status').textContent === 'Done. 1 poll loaded.',
+    );
+    assert.equal(await page.locator('.group-card').count(), 1);
+    assert.equal(await page.locator('#viewHelp').evaluate((node) => node.open), true);
+    assert.equal(await page.locator('.group-section').count(), 0);
+    assert.equal(await page.locator('#groupBy option').count(), 1);
+    await downloadCsv(page, 'poll-results.csv');
+    await page.locator('#pollLinksToggle').click();
+    for (let i = 1; i < 6; i++) await page.locator('#addPoll').click();
+    assert.equal(
+      await page.locator('#link5').getAttribute('placeholder'),
+      'https://t.me/groupchat/128',
+    );
+    await page.evaluate(() => {
+      const options = [{ text: 'Synthetic option', voters: ['1', '2', '3'] }];
+      window.pollFixtures = Array.from({ length: 6 }, (_, index) => ({
+        title:
+          index === 0 || index === 2
+            ? '<img src=x>Which tools?'
+            : index === 5
+              ? ''
+              : 'A long question '.repeat(12) + index,
+        options,
+      }));
+      window.pollFixtures[0].options = [
+        { text: 'A', voters: ['1', '2'] },
+        { text: 'B', voters: ['3'] },
+      ];
+    });
+    await page.locator('#refresh').click();
+    await page.waitForFunction(
+      () => document.getElementById('status').textContent === 'Done. 6 polls loaded.',
+    );
+    const ids = await page.evaluate(() => window.lastPollIds);
+    assert.equal(await page.locator('#groupBy').inputValue(), ids[0]);
+    assert.equal(await page.locator('.group-card').count(), 0);
+    await page.locator('#minimumParticipants').fill('2');
+    assert.equal(await page.locator('.group-card').count(), 1);
+    assert.equal(
+      await page.locator('#groupBy option').first().innerText(),
+      '<img src=x>Which tools? · 1',
+    );
+    assert.equal(
+      await page.locator('#groupBy option').nth(2).innerText(),
+      '<img src=x>Which tools? · 3',
+    );
+    assert.equal(await page.locator('#groupBy option').last().innerText(), 'Poll 6');
+    await page.locator('#groupBy').selectOption(ids[3]);
+    assert.equal(await page.locator('#filterBy').inputValue(), 'grouping');
+    assert.equal(await page.locator('.group-option').count(), 6);
+    await page.locator('#filterBy').selectOption(`poll:${ids[0]}`);
+    assert.equal(await page.locator('.group-option').count(), 5);
+    assert.equal(await page.locator('.group-count').innerText(), 'Participants: 3');
+    const exported = await downloadCsv(page, 'poll-results.csv');
+    assert.ok(exported.includes('<img src=x>Which tools? · 1'));
+    assert.ok(!exported.includes('username:groupchat'));
+    assert.equal(await page.locator('.group-section img').count(), 0);
+    await page.locator('#minimumParticipants').fill('4');
+    assert.equal(await page.locator('.group-card').count(), 0);
+    await page.locator('#filterBy').selectOption('none');
+    assert.equal(await page.locator('.group-card').count(), 1);
+    assert.equal(await page.locator('#minimumParticipants').isDisabled(), true);
+    assert.equal(
+      await page.evaluate(() => window.pollFetchCount),
+      2,
+      'Changing view settings must not reload Telegram',
+    );
+    await page.locator('#filterBy').selectOption('grouping');
+    await page.locator('#minimumParticipants').fill('2');
+    await page.locator('#filterBy').selectOption(`poll:${ids[0]}`);
+    await page.locator('#refresh').click();
+    await page.waitForFunction(() => window.pollFetchCount === 3);
+    assert.equal(await page.locator('#groupBy').inputValue(), ids[3]);
+    assert.equal(await page.locator('#filterBy').inputValue(), `poll:${ids[0]}`);
+    await checkDemoIsolation(page);
+    await page.locator('#pollLinksToggle').click();
+    await page.locator('#link4').fill('https://t.me/groupchat/127');
+    await page.locator('.remove-poll').nth(3).click();
+    assert.equal(await page.locator('#link3').inputValue(), 'https://t.me/groupchat/127');
+    assert.equal(await page.locator('#link1').inputValue(), '');
+    assert.equal(await page.locator('#link2').inputValue(), '');
+    assert.equal(await page.locator('#link4').inputValue(), '');
+    assert.equal(await page.locator('#export').isDisabled(), true);
+    assert.match(await page.locator('#resultMeta').innerText(), /Links changed/);
+    await page.locator('#refresh').click();
+    await page.waitForFunction(
+      () => document.getElementById('status').textContent === 'Done. 5 polls loaded.',
+    );
+    assert.equal(await page.locator('#groupBy').inputValue(), ids[0]);
+    await page.locator('#groupBy').selectOption(ids[5]);
+    await page.locator('#filterBy').selectOption(`poll:${ids[5]}`);
+    await page.locator('#pollLinksToggle').click();
+    await page.locator('.remove-poll').last().click();
+    await page.locator('#refresh').click();
+    await page.waitForFunction(
+      () => document.getElementById('status').textContent === 'Done. 4 polls loaded.',
+    );
+    assert.equal(await page.locator('#groupBy').inputValue(), ids[0]);
+    assert.equal(await page.locator('#filterBy').inputValue(), 'grouping');
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+      false,
+    );
+    await page.reload();
+    assert.equal(await page.locator('.poll-link').count(), 4);
+    assert.equal(await page.locator('#viewHelp').evaluate((node) => node.open), false);
+    assert.equal(await page.locator('#minimumParticipants').inputValue(), '2');
+    await page.evaluate(() =>
+      localStorage.setItem(
+        'poll-intersections.preferences.v1',
+        JSON.stringify({ links: ['https://t.me/groupchat/123', '', '', ''], unusedSetting: 99 }),
+      ),
+    );
+    await page.reload();
+    assert.equal(await page.locator('.poll-link').count(), 4);
+    assert.equal(await page.locator('#minimumParticipants').inputValue(), '3');
+  } finally {
+    await context.close();
+  }
+}
+
 try {
   browser = await chromium.launch({
     executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
     headless: true,
   });
   await checkLazyTelegram();
+  await checkGeneralPolls();
   for (const width of [320, 390, 1280])
     for (const colorScheme of ['light', 'dark']) {
       const timeZone = colorScheme === 'light' ? 'UTC' : 'Europe/Belgrade';
@@ -488,7 +879,7 @@ try {
       assert.equal(await page.locator('#loginSubmit').innerText(), 'Show QR code');
       await page.locator('#cancelLogin').click();
       await page.goto(`${origin}/fixture/`);
-      // Isolate auth storage assertions from the demo's persisted topic filter.
+      // Isolate auth storage assertions from the poll-link form's preferences.
       await page.evaluate(() => localStorage.clear());
       await openQr(page, true);
       assert.equal(await page.locator('#loginForm').evaluate((form) => form.checkValidity()), true);
@@ -595,7 +986,7 @@ try {
     await page.goto(devOrigin);
     await connected;
     await page.locator('#demo').click();
-    assert.equal(await page.locator('.date-card').count(), 10);
+    assert.equal(await page.locator('.group-card').count(), 10);
     await page.evaluate(async () => {
       const { makeCrypto } = await import('/infrastructure/telegram/client.ts');
       const crypto = makeCrypto();

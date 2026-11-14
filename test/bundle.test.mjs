@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';
-import { groupByDate } from '../src/modules/polls/domain/polls.ts';
+import { groupPolls } from '../src/modules/polls/domain/polls.ts';
 import { parseLink } from '../src/modules/polls/application/links.ts';
 
 const require = createRequire(import.meta.url);
@@ -409,7 +409,7 @@ test('Telegram adapter reads four real TL-shaped poll fixtures, pages voters, ke
   assert.equal(data.polls.length, 4);
   assert.equal(Object.keys(data.names).length, 2);
   assert.equal(data.polls[0].votedAt['user:1'], Date.UTC(2026, 10, 12, 8) / 1000 + 1);
-  const [group] = groupByDate(data.polls);
+  const [group] = groupPolls(data.polls, data.polls[1].id);
   assert.equal(group.ids.length, 2);
   assert.ok(group.sections.every((section) => section.options[0].ids.length === 2));
   current = null;
@@ -431,7 +431,7 @@ test('Telegram adapter carries vote times for user and chat voters and merges mu
     assert.equal(poll.votedAt['user:1'], Date.UTC(2026, 10, 12, 8) / 1000 + 61);
     assert.equal(poll.votedAt['peerChannel:2'], Date.UTC(2026, 10, 12, 8) / 1000 + 62);
   }
-  const [group] = groupByDate(data.polls);
+  const [group] = groupPolls(data.polls, data.polls[1].id);
   assert.equal(group.votesByPerson['peerChannel:2'].length, 4);
   assert.ok(
     group.votesByPerson['peerChannel:2'].every(

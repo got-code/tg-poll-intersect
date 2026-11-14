@@ -1,3 +1,7 @@
+export function identifyPolls(polls) {
+  return polls.map((poll, index) => ({ id: `poll:${index + 1}`, ...poll }));
+}
+
 // Small, stable fixtures for intersection and rendering assertions.
 export function samplePolls() {
   const names = { 1: 'Alex', 2: 'Morgan', 3: 'Anna', 4: 'Sam', 5: 'Pat', 6: 'Chris' };
@@ -5,7 +9,7 @@ export function samplePolls() {
     entries.map(([text, voters]) => ({ text, voters: voters.map(String) }));
   return {
     names,
-    polls: [
+    polls: identifyPolls([
       {
         options: options([
           ['Books', [1, 2, 4]],
@@ -30,6 +34,6 @@ export function samplePolls() {
           ['Cafe', [3, 5, 6]],
         ]),
       },
-    ],
+    ]),
   };
 }

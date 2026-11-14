@@ -1,6 +1,7 @@
 # Poll Intersections
 
-Compare four Telegram group polls: topic, date, time and place.
+Find participant intersections across any number of Telegram group polls.
+Group by any poll and filter by a participant minimum in the grouping poll or another poll.
 [Open the app](https://got-code.github.io/tg-poll-intersect/).
 
 ## Requirements
@@ -38,7 +39,8 @@ The app connects directly to Telegram, with no application backend, analytics or
 runtime CDN. It never votes or sends messages; it may read your chat list to resolve
 private links. Votes and QR tokens stay in memory. CSV excludes Telegram IDs.
 
-Links and the topic minimum are saved in this browser. Optional remembered login
+Links, grouping and filter settings are saved in this browser. Demo view settings
+are temporary and do not overwrite your own settings. Optional remembered login
 encrypts the session and API keys with a separate password. Passwords, login codes
 and encryption keys are never persisted. Reload clears results and locks the saved
 login. Data does not sync between browsers or devices.

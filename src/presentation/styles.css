@@ -63,7 +63,8 @@ body {
   margin: 0;
 }
 button,
-input {
+input,
+select {
   font: inherit;
 }
 button,
@@ -107,7 +108,8 @@ a:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
-input {
+input,
+select {
   display: block;
   width: 100%;
   min-width: 0;
@@ -119,7 +121,8 @@ input {
   margin-top: 5px;
   outline: none;
 }
-input:focus {
+input:focus,
+select:focus {
   border-color: var(--green);
   box-shadow: 0 0 0 2px var(--soft);
 }

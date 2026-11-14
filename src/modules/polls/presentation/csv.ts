@@ -1,7 +1,8 @@
-import { SECTION_LABELS } from './labels.ts';
-import type { ExportRow } from '../application/export.ts';
+import { pollLabels } from './labels.ts';
+import type { ExportData } from '../application/export.ts';
 
-export function csv(rows: readonly ExportRow[]) {
+export function csv(data: ExportData) {
+  const labels = pollLabels(data.polls);
   const cell = (value: string | number) => {
     let text = String(value);
     if (/^[\s]*[=+\-@]/u.test(text)) text = "'" + text;
@@ -11,8 +12,9 @@ export function csv(rows: readonly ExportRow[]) {
     '\uFEFF' +
     [
       [
-        'Date',
-        'Section',
+        'Grouping poll',
+        'Group answer',
+        'Poll',
         'Option',
         'Total',
         'Explicit',
@@ -20,9 +22,10 @@ export function csv(rows: readonly ExportRow[]) {
         'Participants',
         'Participants with implicit votes',
       ],
-      ...rows.map((row) => [
-        row.date,
-        SECTION_LABELS[row.section],
+      ...data.rows.map((row) => [
+        labels[row.groupPoll],
+        row.groupOption,
+        labels[row.poll],
         row.option,
         row.total,
         row.explicit,

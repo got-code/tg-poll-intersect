@@ -3,6 +3,7 @@ import { element } from '../../../presentation/dom.ts';
 export function createTooltip() {
   let tooltip: HTMLDivElement | undefined;
   let activeTarget: HTMLElement | null = null;
+  let focusedTarget: HTMLButtonElement | null = null;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   function hide() {
     clearTimeout(hideTimer);
@@ -27,7 +28,13 @@ export function createTooltip() {
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') hide();
       });
-      document.addEventListener('scroll', hide, true);
+      document.addEventListener(
+        'scroll',
+        (event) => {
+          if (event.target !== tooltip) hide();
+        },
+        true,
+      );
       window.addEventListener('resize', hide);
     }
     hide();
@@ -44,16 +51,35 @@ export function createTooltip() {
     tooltip.style.top = Math.max(8, Math.min(top, window.innerHeight - height - 8)) + 'px';
   }
   function bind(button: HTMLButtonElement, text: string) {
-    button.addEventListener('mouseenter', () => show(button, text));
-    button.addEventListener('mouseleave', leave);
-    // Focus can scroll the page. Show after that scroll so it does not dismiss
-    // a tooltip before a keyboard user can read it.
-    button.addEventListener('focus', () =>
+    let hovered = false;
+    button.addEventListener('mouseenter', () => {
+      hovered = true;
+      requestAnimationFrame(() => {
+        if (hovered && button.isConnected && !focusedTarget?.isConnected) show(button, text);
+      });
+    });
+    button.addEventListener('mousemove', () => {
+      if (activeTarget === button) return;
+      requestAnimationFrame(() => {
+        if (hovered && button.isConnected) show(button, text);
+      });
+    });
+    button.addEventListener('mouseleave', () => {
+      hovered = false;
+      leave();
+    });
+    // Focus can scroll other names under the pointer. Keep the focused name's
+    // explanation and show it after the scroll has settled.
+    button.addEventListener('focus', () => {
+      focusedTarget = button;
       requestAnimationFrame(() => {
         if (document.activeElement === button) show(button, text);
-      }),
-    );
-    button.addEventListener('blur', hide);
+      });
+    });
+    button.addEventListener('blur', () => {
+      if (focusedTarget === button) focusedTarget = null;
+      hide();
+    });
     button.addEventListener('click', () => show(button, text));
   }
   return { bind, hide };

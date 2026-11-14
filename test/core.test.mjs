@@ -1,28 +1,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupByDate, filterTopics } from '../src/modules/polls/domain/polls.ts';
+import { groupPolls, filterGroups } from '../src/modules/polls/domain/polls.ts';
 import { parseLink } from '../src/modules/polls/application/links.ts';
 import { readVoters } from '../src/modules/polls/infrastructure/voters.ts';
-import { samplePolls } from './fixtures/polls.mjs';
+import { samplePolls, identifyPolls } from './fixtures/polls.mjs';
+
+const groupOnSecond = (polls) => groupPolls(identifyPolls(polls), 'poll:2');
 
 test('each date lists its own voters and independent topic, time and place intersections', () => {
   const data = samplePolls();
-  const groups = groupByDate(data.polls);
+  const groups = groupOnSecond(data.polls);
   assert.deepEqual(
-    groups.map((group) => group.date),
+    groups.map((group) => group.option),
     ['14 November', '15 November'],
   );
   assert.deepEqual(groups[0].ids, ['1', '2', '3', '4']);
   assert.deepEqual(
-    groups[0].sections.map((section) => section.kind),
-    ['topic', 'time', 'place'],
+    groups[0].sections.map((section) => section.pollId),
+    ['poll:1', 'poll:3', 'poll:4'],
   );
   assert.deepEqual(groups[0].sections[0].options[0].ids, ['1', '2', '4']);
-  assert.equal(groups[0].bestTopicCount, 3);
-  assert.equal(groups[1].bestTopicCount, 3);
   assert.deepEqual(
     groups[1].sections[0].options.map((option) => option.text),
-    ['AI', 'Books'],
+    ['Books', 'AI'],
   );
   assert.deepEqual(groups[0].sections[1].options[0].ids, ['1', '2', '3']);
   assert.deepEqual(groups[0].sections[2].options[0].ids, ['1', '2', '4']);
@@ -45,63 +45,59 @@ test('each date lists its own voters and independent topic, time and place inter
   }
 });
 
-test('topics with equal totals prefer explicit votes and preserve poll order for complete ties', () => {
-  const polls = [
+test('group and section options preserve Telegram order regardless of popularity', () => {
+  const polls = identifyPolls([
     {
       options: [
-        { text: '3+2', voters: ['1', '2', '3', '5', '6'] },
-        { text: '4+1', voters: ['1', '2', '3', '4', '5'] },
-        { text: 'Another 4+1', voters: ['1', '2', '3', '4', '6'] },
+        { text: 'Less', voters: ['1'] },
+        { text: 'More', voters: ['1', '2'] },
       ],
     },
-    { options: [{ text: 'Date', voters: ['1', '2', '3', '4'] }] },
-    { options: [{ text: 'Time', voters: [] }] },
-    { options: [{ text: 'Place', voters: [] }] },
-  ];
-  const [group] = groupByDate(polls);
+    {
+      options: [
+        { text: 'First', voters: ['1', '2'] },
+        { text: 'Second', voters: [] },
+      ],
+    },
+  ]);
+  const groups = groupPolls(polls, polls[1].id);
   assert.deepEqual(
-    group.sections[0].options.map((option) => option.text),
-    ['4+1', 'Another 4+1', '3+2'],
+    groups.map((item) => item.option),
+    ['First', 'Second'],
   );
-  assert.equal(group.bestTopicCount, 5);
-  assert.equal(group.bestTopicExplicitCount, 4);
-  assert.equal(group.bestTopicImplicitCount, 1);
-
-  polls[0].options.push({ text: '3+3', voters: ['1', '2', '3', '5', '6', '7'] });
-  const [larger] = groupByDate(polls);
-  assert.equal(larger.sections[0].options[0].text, '3+3');
-  assert.equal(larger.bestTopicCount, 6);
-  assert.equal(larger.bestTopicExplicitCount, 3);
+  assert.deepEqual(
+    groups[0].sections[0].options.map((item) => item.text),
+    ['Less', 'More'],
+  );
 });
 
 test('minimum applies only to topics and hides dates with no qualifying topic without altering day totals', () => {
-  const groups = groupByDate(samplePolls().polls);
-  const filtered = filterTopics(groups, 3);
+  const groups = groupOnSecond(samplePolls().polls);
+  const filtered = filterGroups(groups, 'poll:1', 3);
   assert.equal(filtered.length, 2);
   for (const group of filtered) {
     assert.equal(group.ids.length, 4);
-    assert.equal(group.bestTopicCount, 3);
     assert.equal(group.sections[0].options.length, 1);
     assert.equal(group.sections[1].options.length, 2);
     assert.equal(group.sections[2].options.length, 2);
   }
   assert.equal(filtered[0].sections[2].options[1].ids.length, 1);
   assert.equal(groups[0].sections[0].options.length, 2);
-  assert.equal(filterTopics(groups, 4).length, 0);
-  assert.deepEqual(filterTopics(groups, 0), groups);
+  assert.equal(filterGroups(groups, 'poll:1', 4).length, 0);
+  assert.deepEqual(filterGroups(groups, 'poll:1', 0), groups);
   const mixed = structuredClone(groups);
-  mixed[1].sections[0].options[0].ids = ['3', '5'];
+  mixed[1].sections[0].options[1].ids = ['3', '5'];
   assert.deepEqual(
-    filterTopics(mixed, 3).map((group) => group.date),
+    filterGroups(mixed, 'poll:1', 3).map((group) => group.option),
     ['14 November'],
   );
 });
 
-test('topic filtering enforces the numeric threshold contract without coercion or application defaults', () => {
-  const groups = groupByDate(samplePolls().polls);
+test('filtering enforces the numeric threshold contract without coercion or application defaults', () => {
+  const groups = groupOnSecond(samplePolls().polls);
   for (const minimum of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '3', null, undefined])
-    assert.throws(() => filterTopics(groups, minimum), /Topic minimum/);
-  assert.deepEqual(filterTopics(groups, 0), groups);
+    assert.throws(() => filterGroups(groups, 'poll:1', minimum), /Participant minimum/);
+  assert.deepEqual(filterGroups(groups, 'poll:1', 0), groups);
 });
 
 test('date voters without votes elsewhere are counted once in every option with separate explicit and implicit totals', () => {
@@ -111,7 +107,7 @@ test('date voters without votes elsewhere are counted once in every option with 
   polls[3].options[0].voters = ['1', '3'];
   polls[0].options.push({ text: 'Empty', voters: [] });
   polls[1].options[0].voters.push('4');
-  const [group] = groupByDate(polls);
+  const [group] = groupOnSecond(polls);
   assert.deepEqual(group.ids, ['1', '2', '4', '3']);
   assert.deepEqual(group.explicitIds, ['1', '2', '4']);
   assert.deepEqual(group.implicitIds, ['3']);
@@ -121,9 +117,6 @@ test('date voters without votes elsewhere are counted once in every option with 
   assert.deepEqual(group.sections[2].options[0].ids, ['1', '2', '4', '3']);
   assert.deepEqual(group.sections[2].options[0].explicitIds, ['1']);
   assert.deepEqual(group.sections[2].options[0].implicitIds, ['2', '4', '3']);
-  assert.equal(group.bestTopicCount, 4);
-  assert.equal(group.bestTopicExplicitCount, 2);
-  assert.equal(group.bestTopicImplicitCount, 2);
 });
 
 test('abstention in any poll includes its options but never overrides an explicit different choice', () => {
@@ -154,7 +147,7 @@ test('abstention in any poll includes its options but never overrides an explici
       ]),
     },
   ];
-  const groups = groupByDate(polls);
+  const groups = groupOnSecond(polls);
   assert.deepEqual(groups[0].sections[0].options[0].ids, ['1', '2', '5']);
   assert.deepEqual(groups[0].sections[0].options[1].ids, ['3', '2']);
   assert.deepEqual(groups[0].sections[1].options[1].ids, ['3']);
@@ -181,12 +174,9 @@ test('abstention in any poll includes its options but never overrides an explici
   polls[0].options.forEach((option) => {
     option.voters = [];
   });
-  const allFlexible = groupByDate(polls);
-  assert.equal(allFlexible[0].bestTopicCount, 4);
-  assert.equal(allFlexible[0].bestTopicExplicitCount, 0);
-  assert.equal(allFlexible[0].bestTopicImplicitCount, 4);
+  const allFlexible = groupOnSecond(polls);
   assert.deepEqual(
-    filterTopics(allFlexible, 4).map((group) => group.date),
+    filterGroups(allFlexible, 'poll:1', 4).map((group) => group.option),
     ['D1'],
   );
 });
@@ -200,13 +190,13 @@ test('the same missing-vote rule applies to all four polls; double abstention co
       ],
     }));
     polls[missingPoll].options[0].voters = ['1'];
-    const groups = groupByDate(polls);
+    const groups = groupOnSecond(polls);
     const options =
       missingPoll === 1 ? groups : groups[0].sections[[0, -1, 1, 2][missingPoll]].options;
     for (const option of options) {
       assert.ok(
         option.implicitIds.includes('2'),
-        `poll ${missingPoll}: ${option.text ?? option.date}`,
+        `poll ${missingPoll}: ${option.text ?? option.option}`,
       );
       assert.equal(option.ids.filter((id) => id === '2').length, 1);
     }
@@ -218,7 +208,7 @@ test('the same missing-vote rule applies to all four polls; double abstention co
     ],
   }));
   polls[3].options[0].voters = ['1', '1'];
-  const groups = groupByDate(polls);
+  const groups = groupOnSecond(polls);
   for (const group of groups) {
     assert.deepEqual(group.explicitIds, []);
     assert.deepEqual(group.implicitIds, ['1']);
@@ -230,7 +220,7 @@ test('the same missing-vote rule applies to all four polls; double abstention co
       }
   }
   polls[3].options[0].voters = [];
-  assert.ok(groupByDate(polls).every((group) => group.ids.length === 0));
+  assert.ok(groupOnSecond(polls).every((group) => group.ids.length === 0));
 });
 
 test('public, private and forum message links', () => {
@@ -307,12 +297,12 @@ test('pagination retains the latest vote time and distinguishes missing metadata
     options: [{ text: 'Option', voters: index === 0 ? ['1', '2', '3'] : ['1'] }],
     votedAt: index === 0 ? result.votedAt : { 1: start },
   }));
-  const [group] = groupByDate(polls);
+  const [group] = groupOnSecond(polls);
   assert.deepEqual(group.votesByPerson['3'], [
-    { kind: 'topic', voted: true, at: null },
-    { kind: 'date', voted: false, at: null },
-    { kind: 'time', voted: false, at: null },
-    { kind: 'place', voted: false, at: null },
+    { pollId: 'poll:1', voted: true, at: null },
+    { pollId: 'poll:2', voted: false, at: null },
+    { pollId: 'poll:3', voted: false, at: null },
+    { pollId: 'poll:4', voted: false, at: null },
   ]);
   assert.equal(group.votesByPerson['2'][0].at, start + 60);
 });
@@ -335,4 +325,71 @@ test('rejects missing pages, repeated cursors and changing totals', async () => 
     readVoters(async () => ({ count: 1, people: [{ id: 1 }] }), 2),
     /changed/,
   );
+});
+
+test('any number of polls can group by any identity with independent explicit and implicit intersections', () => {
+  for (const count of [1, 2, 3, 5, 8]) {
+    const polls = identifyPolls(
+      Array.from({ length: count }, (_, index) => ({
+        title: 'Same question',
+        options: [
+          { text: 'A', voters: ['1', ...(index % 2 ? ['2'] : [])] },
+          { text: 'B', voters: index % 3 ? ['3', '3'] : [] },
+        ],
+      })),
+    );
+    const before = structuredClone(polls);
+    const allVoters = [
+      ...new Set(polls.flatMap((poll) => poll.options.flatMap((option) => option.voters))),
+    ];
+    for (const grouping of polls) {
+      const groups = groupPolls(polls, grouping.id);
+      assert.equal(groups.length, 2);
+      groups.forEach((group, index) => {
+        const accepts = (poll, option, id) =>
+          option.voters.includes(id) || !poll.options.some((answer) => answer.voters.includes(id));
+        const expected = allVoters.filter((id) => accepts(grouping, grouping.options[index], id));
+        assert.deepEqual(new Set(group.ids), new Set(expected));
+        assert.equal(group.sections.length, count - 1);
+        assert.deepEqual(
+          group.sections.map((section) => section.pollId),
+          polls.filter((poll) => poll.id !== grouping.id).map((poll) => poll.id),
+        );
+        for (const section of group.sections) {
+          const source = polls.find((poll) => poll.id === section.pollId);
+          section.options.forEach((option, answerIndex) => {
+            const match = expected.filter((id) => accepts(source, source.options[answerIndex], id));
+            assert.deepEqual(new Set(option.ids), new Set(match));
+            assert.equal(new Set(option.ids).size, option.ids.length);
+            assert.deepEqual(
+              new Set(option.explicitIds),
+              new Set(
+                match.filter(
+                  (id) =>
+                    grouping.options[index].voters.includes(id) &&
+                    source.options[answerIndex].voters.includes(id),
+                ),
+              ),
+            );
+            assert.deepEqual(option.ids, [...option.explicitIds, ...option.implicitIds]);
+          });
+        }
+      });
+      assert.deepEqual(filterGroups(groups, null, 100), groups);
+      assert.deepEqual(
+        filterGroups(groups, grouping.id, 2),
+        groups.filter((group) => group.ids.length >= 2),
+      );
+    }
+    assert.deepEqual(polls, before);
+  }
+});
+
+test('poll invariants reject missing options, duplicate identities and invalid selections', () => {
+  const polls = identifyPolls([{ options: [{ text: 'A', voters: [] }] }]);
+  assert.throws(() => groupPolls([], 'poll:1'), /At least one/);
+  assert.throws(() => groupPolls([{ id: 'empty', options: [] }], 'empty'), /answer options/);
+  assert.throws(() => groupPolls([...polls, ...polls], 'poll:1'), /distinct identity/);
+  assert.throws(() => groupPolls(polls, 'removed'), /loaded poll/);
+  assert.throws(() => filterGroups(groupPolls(polls, 'poll:1'), 'removed', 0), /loaded poll/);
 });

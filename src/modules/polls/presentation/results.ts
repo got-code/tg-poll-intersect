@@ -1,12 +1,13 @@
 import { element } from '../../../presentation/dom.ts';
 import { createTooltip } from './tooltip.ts';
-import { POLL_LABELS, SECTION_LABELS } from './labels.ts';
-import type { DateGroup, ParticipantNames, PersonVote, PollKind } from '../domain/models.ts';
+import { pollLabels } from './labels.ts';
+import type { PollGroup, ParticipantNames, PersonVote, Poll } from '../domain/models.ts';
 
 function participantExplanation(
   id: string,
   votes: readonly PersonVote[],
   formatTime: Intl.DateTimeFormat,
+  labels: ReadonlyMap<string, string>,
 ) {
   const time = (at: number | null) => {
     const date = typeof at === 'number' && at > 0 ? new Date(at * 1000) : null;
@@ -14,7 +15,7 @@ function participantExplanation(
   };
   return [
     ...[...votes.filter((vote) => !vote.voted), ...votes.filter((vote) => vote.voted)].map(
-      (vote) => `${POLL_LABELS[vote.kind]} — ${vote.voted ? time(vote.at) : 'no vote'}`,
+      (vote) => `“${labels.get(vote.pollId)}” — ${vote.voted ? time(vote.at) : 'no vote'}`,
     ),
     `Telegram ID: ${id.split(':').at(-1)}`,
   ].join('\n');
@@ -33,27 +34,19 @@ export function createResultsRenderer(container: HTMLElement) {
     explicit: number,
     implicit: number,
     className: string,
-    prefix = '',
-    context: readonly PollKind[] = ['date'],
-    description = '',
+    prefix: string,
+    context: readonly string[],
   ) {
     const label = prefix + explicit + (implicit ? `(+${implicit}?)` : '');
-    if (!implicit && !description) return element('span', className, label);
+    if (!implicit) return element('span', className, label);
     const count = element('button', className, label);
-    if (implicit || description) {
-      count.type = 'button';
-      const explanation = [
-        description,
-        implicit
-          ? `${implicit} ${implicit === 1 ? 'person has' : 'people have'} no vote in ${context.map((kind) => POLL_LABELS[kind]).join(' or ')}.`
-          : '',
-        `Total: ${explicit + implicit}`,
-      ]
-        .filter(Boolean)
-        .join('\n');
-      count.setAttribute('aria-label', prefix + explanation);
-      tooltip.bind(count, explanation);
-    }
+    count.type = 'button';
+    const explanation = [
+      `${implicit} ${implicit === 1 ? 'person has' : 'people have'} no vote in ${context.map((label) => `“${label}”`).join(' or ')}.`,
+      `Total: ${explicit + implicit}`,
+    ].join('\n');
+    count.setAttribute('aria-label', prefix + explanation);
+    tooltip.bind(count, explanation);
     return count;
   }
 
@@ -62,6 +55,7 @@ export function createResultsRenderer(container: HTMLElement) {
     names: ParticipantNames,
     implicitIds: readonly string[],
     votesByPerson: Record<string, PersonVote[]>,
+    labels: ReadonlyMap<string, string>,
   ) {
     if (!ids.length) return element('span', 'no-people', 'No participants');
     const implicit = new Set(implicitIds);
@@ -71,7 +65,7 @@ export function createResultsRenderer(container: HTMLElement) {
       const name = names[id] || 'Unnamed participant';
       const button = element('button', implicit.has(id) ? 'person implicit' : 'person', name);
       button.type = 'button';
-      const explanation = participantExplanation(id, votesByPerson[id], formatTime);
+      const explanation = participantExplanation(id, votesByPerson[id], formatTime, labels);
       tooltip.bind(button, explanation);
       item.append(button);
       list.append(item);
@@ -79,34 +73,38 @@ export function createResultsRenderer(container: HTMLElement) {
     return list;
   }
 
-  return function render(groups: readonly DateGroup[], names: ParticipantNames) {
+  return function render(
+    groups: readonly PollGroup[],
+    names: ParticipantNames,
+    polls: readonly Poll[],
+  ) {
     tooltip.hide();
+    const titles = pollLabels(polls);
+    const labels = new Map(polls.map((poll, index) => [poll.id, titles[index]]));
     container.replaceChildren();
     for (const group of groups) {
-      const card = element('section', 'date-card');
-      const heading = element('div', 'date-heading');
-      const stats = element('div', 'date-stats');
+      const card = element('section', 'group-card');
+      const heading = element('div', 'group-heading');
+      const stats = element('div', 'group-stats');
       stats.append(
-        countNode(group.explicitIds.length, group.implicitIds.length, 'date-count', 'Day: '),
         countNode(
-          group.bestTopicExplicitCount,
-          group.bestTopicImplicitCount,
-          'best-topic-count',
-          'Top topic: ',
-          ['date', 'topic'],
-          'Largest topic group for this date.',
+          group.explicitIds.length,
+          group.implicitIds.length,
+          'group-count',
+          'Participants: ',
+          [labels.get(group.pollId)!],
         ),
       );
-      heading.append(element('h3', '', group.date), stats);
-      const attendees = element('div', 'date-attendees');
-      attendees.append(people(group.ids, names, group.implicitIds, group.votesByPerson));
+      heading.append(element('h3', '', group.option), stats);
+      const attendees = element('div', 'group-attendees');
+      attendees.append(people(group.ids, names, group.implicitIds, group.votesByPerson, labels));
       card.append(heading, attendees);
       for (const section of group.sections) {
-        const block = element('section', 'date-section');
-        block.append(element('h4', '', SECTION_LABELS[section.kind]));
+        const block = element('section', 'group-section');
+        block.append(element('h4', '', labels.get(section.pollId)));
         for (const option of section.options) {
-          const context: PollKind[] = ['date', section.kind];
-          const row = element('div', 'date-option');
+          const context = [labels.get(group.pollId)!, labels.get(section.pollId)!];
+          const row = element('div', 'group-option');
           row.append(
             element('span', 'option-name', option.text),
             countNode(
@@ -116,7 +114,7 @@ export function createResultsRenderer(container: HTMLElement) {
               '',
               context,
             ),
-            people(option.ids, names, option.implicitIds, group.votesByPerson),
+            people(option.ids, names, option.implicitIds, group.votesByPerson, labels),
           );
           block.append(row);
         }

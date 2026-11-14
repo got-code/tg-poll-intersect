@@ -1,13 +1,15 @@
-import { filterTopics } from '../domain/polls.ts';
-import { canExportResults, exportResults } from '../application/export.ts';
-import { matchesSourceLinks } from '../application/results.ts';
+import { exportResults } from '../application/export.ts';
+import { matchesSourceLinks, selectResultGroups } from '../application/results.ts';
 import { csv } from './csv.ts';
+import { createViewControls } from './controls.ts';
+import { pollLabels } from './labels.ts';
 import { createPollForm } from './form.ts';
 import { createResultsRenderer } from './results.ts';
 import { element } from '../../../presentation/dom.ts';
 import { $ } from './dom.ts';
+import type { PollGroup } from '../domain/models.ts';
 import type { PollResult, PollResults } from '../application/results.ts';
-import type { PreferencesStore } from '../application/preferences.ts';
+import type { PreferencesStore, ViewSettings } from '../application/preferences.ts';
 
 interface PollDependencies {
   results: PollResults;
@@ -28,59 +30,103 @@ export function createPollController({
   openLogin,
   onBusyChange,
 }: PollDependencies) {
-  const renderDates = createResultsRenderer($('rows'));
-  const form = createPollForm({
-    preferences,
-    onLinksChange: updateResultMeta,
-    onMinimumChange: render,
-  });
+  const renderGroups = createResultsRenderer($('rows'));
+  const saved = preferences.readPreferences();
+  const help = $('viewHelp');
+  help.open = !saved.links.some((link) => link.trim());
+  function updateHelpDescriptions() {
+    for (const [id, hint] of [
+      ['groupBy', 'groupByHint'],
+      ['filterBy', 'filterByHint'],
+    ] as const) {
+      if (help.open) $(id).setAttribute('aria-describedby', hint);
+      else $(id).removeAttribute('aria-describedby');
+    }
+  }
+  help.addEventListener('toggle', updateHelpDescriptions);
+  updateHelpDescriptions();
   let busy = false;
   let result: PollResult | null = null;
+  let visible: PollGroup[] = [];
+  let preferencesAvailable = true;
+  const controls = createViewControls(saved, () => {
+    if (result?.kind !== 'demo') {
+      liveSettings = controls.getSettings();
+      persist();
+    }
+    render();
+  });
+  let liveSettings = controls.getSettings();
+  const form = createPollForm({
+    links: saved.links,
+    onLinksChange() {
+      persist();
+      updateResultMeta();
+    },
+  });
 
-  const visibleGroups = () => (result ? filterTopics(result.groups, form.getMinimum()) : []);
   const linksMatch = () => result && matchesSourceLinks(result, form.identities());
-  const exportDisabled = () =>
-    busy || !result || !canExportResults(result, form.identities(), form.getMinimum());
+  const exportDisabled = () => busy || !result || !linksMatch() || !visible.length;
   const loadedTime = (value: PollResult) =>
     value.updatedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+  function persist() {
+    preferencesAvailable = preferences.writePreferences({ links: form.values(), ...liveSettings });
+    updatePreferencesHint();
+  }
+
+  function updatePreferencesHint() {
+    $('preferencesHint').textContent = preferencesAvailable
+      ? result?.kind === 'demo'
+        ? 'Demo view settings are temporary. Your own settings are kept.'
+        : 'Links and view settings are saved in this browser.'
+      : 'Browser storage is unavailable. These settings will not survive a reload.';
+  }
 
   function updateResultMeta() {
     if (result) {
       $('resultMeta').textContent =
-        result.kind === 'demo'
-          ? `${result.groups.length} dates · sample data`
-          : !linksMatch()
-            ? 'Links changed. Refresh the results.'
-            : `${result.groups.length} dates · loaded at ${loadedTime(result)}`;
+        result.kind === 'live' && !linksMatch()
+          ? 'Links changed. Refresh the results.'
+          : `${visible.length} ${visible.length === 1 ? 'group' : 'groups'} · ${result.polls.length} ${result.polls.length === 1 ? 'poll' : 'polls'}${result.kind === 'live' ? ` · loaded at ${loadedTime(result)}` : ''}`;
     }
     $('export').disabled = exportDisabled();
   }
 
   function render() {
     if (!result) return;
-    const visible = visibleGroups();
-    renderDates(visible, result.names);
+    const settings = controls.getSettings();
+    visible = selectResultGroups(result, settings);
+    const labels = pollLabels(result.polls);
+    const groupIndex = result.polls.findIndex((poll) => poll.id === settings.groupBy);
+    $('resultHeading').textContent = `By “${labels[groupIndex]}”`;
+    renderGroups(visible, result.names, result.polls);
     $('empty').hidden = visible.length > 0;
     if (!visible.length) {
       $('empty').replaceChildren(
-        element('strong', '', `No dates with topics for at least ${form.getMinimum()} people`),
-        element('p', '', 'Lower the topic minimum to see more dates.'),
+        element('strong', '', 'No groups match the participant minimum'),
+        element('p', '', 'Lower the minimum, choose another poll or turn off the filter.'),
       );
     }
-    $('resultFooter').hidden = false;
+    $('resultFooter').hidden = !visible.length;
     $('demoLabel').hidden = result.kind !== 'demo';
-    $('export').disabled = exportDisabled();
+    updateResultMeta();
   }
 
-  function showData(value: PollResult) {
+  function showData(value: PollResult, settings: ViewSettings) {
     result = value;
-    updateResultMeta();
+    controls.setPolls(value.polls, settings);
+    if (value.kind === 'live') {
+      liveSettings = controls.getSettings();
+      form.setPolls(value.polls);
+    }
+    updatePreferencesHint();
     render();
   }
 
   function setBusy(value: boolean) {
     busy = value;
-    (['refresh', 'demo'] as const).forEach((id) => {
+    (['refresh', 'demo', 'demoExample'] as const).forEach((id) => {
       $(id).disabled = value;
     });
     onBusyChange(value);
@@ -114,9 +160,12 @@ export function createPollController({
               : 'Checking result completeness…',
           ),
         ),
+        liveSettings,
       );
       form.collapse();
-      status('Done. All four polls have been loaded.');
+      status(
+        `Done. ${result!.polls.length} ${result!.polls.length === 1 ? 'poll' : 'polls'} loaded.`,
+      );
     } catch (error) {
       status(explainError(error), true);
       if (result?.kind === 'live')
@@ -132,17 +181,20 @@ export function createPollController({
     event.preventDefault();
     return refresh();
   });
-  $('demo').addEventListener('click', () => {
-    showData(results.demo());
+  function showDemo() {
+    const demo = results.demo();
+    showData(demo, demo.viewSettings);
     status(
       'The demo does not connect to Telegram. Add your poll links and refresh to load your results.',
     );
-  });
+  }
+  $('demo').addEventListener('click', showDemo);
+  $('demoExample').addEventListener('click', showDemo);
   $('export').addEventListener('click', () => {
     const current = result;
     if (!current || exportDisabled()) return;
     const url = URL.createObjectURL(
-      new Blob([csv(exportResults(current, form.identities(), form.getMinimum()))], {
+      new Blob([csv(exportResults(current, form.identities(), controls.getSettings()))], {
         type: 'text/csv;charset=utf-8',
       }),
     );
@@ -157,8 +209,13 @@ export function createPollController({
   return {
     clear(hasSavedLogin: boolean) {
       result = null;
-      renderDates([], {});
-      $('resultMeta').textContent = 'Participants and options for each date';
+      visible = [];
+      renderGroups([], {}, []);
+      controls.setPolls([], liveSettings);
+      updatePreferencesHint();
+      form.setPolls([]);
+      $('resultHeading').textContent = 'Intersections';
+      $('resultMeta').textContent = 'Participants and answer overlaps across polls';
       $('empty').replaceChildren(
         element('strong', '', 'Disconnected'),
         element(

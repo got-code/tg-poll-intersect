@@ -25,9 +25,9 @@
       </header>
       <main>
         <section class="intro">
-          <div class="eyebrow">Four polls · one plan</div>
-          <h1>Find where everyone’s plans meet.</h1>
-          <p>Compare topics, dates, times and places chosen by the same participants.</p>
+          <div class="eyebrow">Telegram poll intersections</div>
+          <h1>Find intersections across Telegram polls.</h1>
+          <p>Explore participant overlaps across poll answers.</p>
         </section>
         <section class="panel" aria-labelledby="pollHeading">
           <form id="pollForm">
@@ -41,67 +41,18 @@
                   <span class="links-arrow">▾</span></span
                 >
               </summary>
-              <div class="links">
-                <label
-                  ><span class="num">01</span>Topic<input
-                    id="link0"
-                    type="url"
-                    placeholder="https://t.me/group/123"
-                    required
-                    autocomplete="off"
-                    spellcheck="false"
-                    aria-label="Topic poll link"
-                    aria-describedby="linkHint0"
-                  /><span id="linkHint0" class="field-hint">Start with the topic poll.</span></label
-                >
-                <label
-                  ><span class="num">02</span>Date<input
-                    id="link1"
-                    type="url"
-                    placeholder="Next message, or paste a link"
-                    autocomplete="off"
-                    spellcheck="false"
-                    aria-label="Date poll link"
-                    aria-describedby="linkHint1"
-                  /><span id="linkHint1" class="field-hint"
-                    >Leave blank to use the next message.</span
-                  ></label
-                >
-                <label
-                  ><span class="num">03</span>Time<input
-                    id="link2"
-                    type="url"
-                    placeholder="Next message, or paste a link"
-                    autocomplete="off"
-                    spellcheck="false"
-                    aria-label="Time poll link"
-                    aria-describedby="linkHint2"
-                  /><span id="linkHint2" class="field-hint"
-                    >Leave blank to use the next message.</span
-                  ></label
-                >
-                <label
-                  ><span class="num">04</span>Place<input
-                    id="link3"
-                    type="url"
-                    placeholder="Next message, or paste a link"
-                    autocomplete="off"
-                    spellcheck="false"
-                    aria-label="Place poll link"
-                    aria-describedby="linkHint3"
-                  /><span id="linkHint3" class="field-hint"
-                    >Leave blank to use the next message.</span
-                  ></label
-                >
+              <div class="link-actions">
+                <button id="addPoll" type="button">Add poll</button>
+                <button id="clearLinks" type="button" class="text" hidden>Clear links</button>
               </div>
-              <button id="clearLinks" type="button" class="text" hidden>Clear links</button>
+              <div id="pollLinkFields" class="links"></div>
             </details>
             <div class="actions">
               <button class="primary" id="refresh" type="submit">
                 Refresh results <span aria-hidden="true">↗</span></button
               ><button id="demo" type="button">Demo</button
               ><span class="hint" id="preferencesHint"
-                >Links and topic minimum are saved in this browser.</span
+                >Links and view settings are saved in this browser.</span
               >
             </div>
           </form>
@@ -110,30 +61,91 @@
         <section class="results" aria-labelledby="resultHeading">
           <div class="resulthead">
             <div>
-              <h2 id="resultHeading">By date</h2>
-              <div id="resultMeta" class="muted small">Participants and options for each date</div>
+              <h2 id="resultHeading">Intersections</h2>
+              <div id="resultMeta" class="muted small">
+                Participants and answer overlaps across polls
+              </div>
             </div>
             <button id="export" disabled>Download CSV</button>
           </div>
-          <label class="topic-filter"
-            >Minimum people per topic<input
-              id="topicMinimum"
-              type="number"
-              min="0"
-              step="1"
-              value="3"
-              inputmode="numeric"
-          /></label>
+          <details id="viewHelp" class="view-help" open>
+            <summary id="viewHelpToggle">How grouping and filtering work</summary>
+            <div class="view-help-content">
+              <p id="groupByHint">
+                <strong>Group by</strong> — Each option in the poll selected under “Group by” gets
+                its own card. Inside, see the participants and their choices in the other polls.
+              </p>
+              <p id="filterByHint">
+                <strong>Filter by</strong> — Inside each card, count people for each option in the
+                poll selected under “Filter by”. Hide options below the minimum, and hide the card
+                if no option reaches it.
+              </p>
+              <div id="filterExample" class="help-example">
+                <p class="example-heading">
+                  <strong>For example —</strong>
+                  <button id="demoExample" type="button">Try the demo</button>
+                </p>
+                <p>
+                  Set <strong>Group by</strong> to “Which date?” and <strong>Filter by</strong> to
+                  “What shall we discuss?”, with a minimum of <strong>3</strong> people. In the
+                  <strong>“16 November”</strong> card:
+                </p>
+                <ul>
+                  <li><strong>Books has 4 people</strong> — shown.</li>
+                  <li><strong>AI has 3 people</strong> — shown.</li>
+                  <li><strong>Science has 2 people</strong> — hidden.</li>
+                </ul>
+                <p>
+                  Raise the minimum to <strong>5</strong>: the “16 November” card disappears because
+                  no discussion option in that card has 5 people. Totals include implicit
+                  participants marked with <strong>?</strong>.
+                </p>
+              </div>
+              <p id="filterModes">
+                <strong>Filter options</strong> — In the <strong>Filter by</strong> dropdown, choose
+                <strong>Same as Group by</strong> to apply the minimum to each card’s total number
+                of people. This option uses the poll selected under “Group by”. Choose a poll name
+                to keep filtering that poll when “Group by” changes, or <strong>None</strong> to
+                show every card and option.
+              </p>
+            </div>
+          </details>
+          <div class="view-controls" role="group" aria-label="Result settings">
+            <div>
+              <label for="groupBy">Group by</label>
+              <select id="groupBy" aria-describedby="groupByHint" disabled></select>
+            </div>
+            <div>
+              <label for="filterBy">Filter by</label>
+              <select id="filterBy" aria-describedby="filterByHint" disabled></select>
+            </div>
+            <div class="minimum-filter">
+              <label for="minimumParticipants">Minimum participants</label>
+              <input
+                id="minimumParticipants"
+                aria-describedby="minimumParticipantsHint"
+                type="number"
+                min="0"
+                step="1"
+                value="3"
+                inputmode="numeric"
+                disabled
+              />
+              <span id="minimumParticipantsHint" class="field-hint">
+                Counts explicit + implicit participants.
+              </span>
+            </div>
+          </div>
           <p class="vote-legend">
             3(+2?) means 3 explicit + 2 implicit participants. Dashed names are implicit for this
             row.
           </p>
           <div id="demoLabel" class="demoLabel" hidden>Demo · fictional participants and votes</div>
           <div id="empty" class="empty">
-            <strong>Who is available on each date?</strong>
+            <strong>Where do the answers overlap?</strong>
             <p>
-              Paste the first link if your four polls are consecutive, or enter each link
-              separately. Refresh to load votes, or try the demo.
+              Add links to the polls you want to compare. For consecutive messages, paste the first
+              link and add a row for each following poll. Refresh to load votes, or try the demo.
             </p>
           </div>
           <div id="rows"></div>
@@ -143,8 +155,7 @@
         </section>
         <p class="notice">
           Includes anyone who voted in at least one poll. An unanswered poll counts as an implicit
-          vote for all its options. Within a date, a match is implicit if either the date or the
-          option is assumed.
+          vote for all its options. An intersection is implicit if either answer is assumed.
         </p>
       </main>
       <footer>

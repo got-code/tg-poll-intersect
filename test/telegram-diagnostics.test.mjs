@@ -1,18 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTelegramDiagnostics } from '../src/infrastructure/telegram-diagnostics.mjs';
+import { createTelegramDiagnostics } from '../src/infrastructure/telegram/diagnostics.ts';
 
 test('auth diagnostics expose delivery information and omit credentials and response bodies', async () => {
   const entries = [];
   const trace = createTelegramDiagnostics((...args) => entries.push(args));
   const request = {
-    _: 'auth.sendCode', phoneNumber: 'SECRET_PHONE', apiId: 987654,
-    apiHash: 'SECRET_API_HASH', phoneCode: 'SECRET_CODE',
+    _: 'auth.sendCode',
+    phoneNumber: 'SECRET_PHONE',
+    apiId: 987654,
+    apiHash: 'SECRET_API_HASH',
+    phoneCode: 'SECRET_CODE',
   };
   const response = {
-    _: 'auth.sentCode', phoneCodeHash: 'SECRET_CODE_HASH',
+    _: 'auth.sentCode',
+    phoneCodeHash: 'SECRET_CODE_HASH',
     type: { _: 'auth.sentCodeTypeApp', length: 5 },
-    nextType: { _: 'auth.codeTypeSms' }, timeout: 60,
+    nextType: { _: 'auth.codeTypeSms' },
+    timeout: 60,
     authorization: { authKey: 'SECRET_AUTH_KEY', user: { id: 'SECRET_USER_ID' } },
   };
   assert.equal(await trace(request, async () => response), response);
@@ -31,21 +36,38 @@ test('auth diagnostics expose delivery information and omit credentials and resp
 test('success, no fallback, error and timeout logs preserve RPC results and rejections', async () => {
   const entries = [];
   const trace = createTelegramDiagnostics((...args) => entries.push(args));
-  await trace({ _: 'auth.sendCode' }, async () => ({ _: 'auth.sentCode', type: { _: 'auth.sentCodeTypeApp' } }));
+  await trace({ _: 'auth.sendCode' }, async () => ({
+    _: 'auth.sentCode',
+    type: { _: 'auth.sentCodeTypeApp' },
+  }));
   assert.equal(JSON.parse(entries.at(-1)[1]).nextDelivery, 'none');
   assert.equal(JSON.parse(entries.at(-1)[1]).timeoutSeconds, 0);
-  await trace({ _: 'auth.signIn', phoneCode: 'SECRET_CODE' }, async () => ({ _: 'auth.authorization', user: { firstName: 'SECRET_NAME' } }));
+  await trace({ _: 'auth.signIn', phoneCode: 'SECRET_CODE' }, async () => ({
+    _: 'auth.authorization',
+    user: { firstName: 'SECRET_NAME' },
+  }));
   assert.equal(JSON.parse(entries.at(-1)[1]).result, 'auth.authorization');
   for (const text of ['SESSION_PASSWORD_NEEDED', 'FLOOD_WAIT_120', 'PHONE_MIGRATE_4']) {
     const error = Object.assign(new Error('SECRET_ERROR_PAYLOAD'), { code: 400, text });
-    await assert.rejects(trace({ _: 'auth.sendCode' }, async () => { throw error; }), value => value === error);
+    await assert.rejects(
+      trace({ _: 'auth.sendCode' }, async () => {
+        throw error;
+      }),
+      (value) => value === error,
+    );
     assert.equal(JSON.parse(entries.at(-1)[1]).error, text);
   }
-  await assert.rejects(trace({ _: 'auth.sendCode' }, async () => { throw new Error('Request timed out'); }));
+  await assert.rejects(
+    trace({ _: 'auth.sendCode' }, async () => {
+      throw new Error('Request timed out');
+    }),
+  );
   assert.equal(JSON.parse(entries.at(-1)[1]).error, 'TIMEOUT');
-  await assert.rejects(trace({ _: 'auth.checkPassword', password: 'SECRET_PASSWORD' }, async () => {
-    throw Object.assign(new Error('SECRET_SESSION'), { text: 'SECRET_API_HASH' });
-  }));
+  await assert.rejects(
+    trace({ _: 'auth.checkPassword', password: 'SECRET_PASSWORD' }, async () => {
+      throw Object.assign(new Error('SECRET_SESSION'), { text: 'SECRET_API_HASH' });
+    }),
+  );
   assert.equal(JSON.parse(entries.at(-1)[1]).error, 'UNRECOGNIZED_ERROR');
   assert.ok(!JSON.stringify(entries).includes('SECRET'));
 });
@@ -56,7 +78,9 @@ test('poll data is not logged and console failures cannot prevent authentication
   const votes = { users: ['PRIVATE_NAME'], votes: ['PRIVATE_VOTE'] };
   assert.equal(await trace({ _: 'messages.getPollVotes' }, async () => votes), votes);
   assert.equal(entries.length, 0);
-  const brokenConsole = createTelegramDiagnostics(() => { throw new Error('console disabled'); });
+  const brokenConsole = createTelegramDiagnostics(() => {
+    throw new Error('console disabled');
+  });
   const response = { _: 'auth.sentCode' };
   assert.equal(await brokenConsole({ _: 'auth.sendCode' }, async () => response), response);
 });
@@ -65,14 +89,27 @@ test('QR diagnostics log token constructors and known errors, never the tokens o
   const entries = [];
   const trace = createTelegramDiagnostics((...args) => entries.push(args));
   for (const method of ['auth.exportLoginToken', 'auth.importLoginToken']) {
-    const request = {_:method, apiId:987654, apiHash:'SECRET_HASH', token:'SECRET_TOKEN'};
-    for (const result of ['auth.loginToken', 'auth.loginTokenMigrateTo', 'auth.loginTokenSuccess']) {
-      const response = {_:result, token:'SECRET_TOKEN', authorization:{user:{firstName:'SECRET_NAME'}}};
+    const request = { _: method, apiId: 987654, apiHash: 'SECRET_HASH', token: 'SECRET_TOKEN' };
+    for (const result of [
+      'auth.loginToken',
+      'auth.loginTokenMigrateTo',
+      'auth.loginTokenSuccess',
+    ]) {
+      const response = {
+        _: result,
+        token: 'SECRET_TOKEN',
+        authorization: { user: { firstName: 'SECRET_NAME' } },
+      };
       assert.equal(await trace(request, async () => response), response);
       assert.equal(JSON.parse(entries.at(-1)[1]).result, result);
     }
-    const error = {text:'AUTH_TOKEN_EXPIRED', code:400};
-    await assert.rejects(trace(request, async () => { throw error; }), value => value === error);
+    const error = { text: 'AUTH_TOKEN_EXPIRED', code: 400 };
+    await assert.rejects(
+      trace(request, async () => {
+        throw error;
+      }),
+      (value) => value === error,
+    );
     assert.equal(JSON.parse(entries.at(-1)[1]).error, 'AUTH_TOKEN_EXPIRED');
   }
   assert.ok(!JSON.stringify(entries).includes('SECRET'));

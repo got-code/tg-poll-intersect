@@ -4,96 +4,191 @@ import { webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { build } from 'esbuild';
-import { decryptSession, SESSION_KEY } from '../src/infrastructure/session.mjs';
-import { PREFERENCES_KEY } from '../src/infrastructure/preferences.mjs';
-import { demo } from '../src/demo.mjs';
+import { decryptSession, SESSION_KEY } from '../src/infrastructure/session.ts';
+import { PREFERENCES_KEY } from '../src/infrastructure/preferences.ts';
+import { demo } from '../src/demo.ts';
 
 globalThis.crypto ??= webcrypto;
 // Exercise the real app and encryption with a tiny DOM substitute and a fake
 // Telegram transport. These tests do not launch a browser or contact an account.
 const compiled = await build({
-  entryPoints: ['src/main.mjs'], bundle: true, write: false, platform: 'browser', format: 'iife',
-  plugins: [{ name:'fake-telegram', setup(builder) {
-    builder.onLoad({ filter:/\/telegram\.mjs$/ }, () => ({ contents: `
-      export const createClient = (...args) => hooks.createClient(...args);
-      export const auth = {
+  bundle: true,
+  write: false,
+  platform: 'browser',
+  format: 'iife',
+  stdin: {
+    resolveDir: process.cwd(),
+    loader: 'js',
+    contents: `
+    import { mountTestApp } from './test/fixtures/app.mjs';
+    mountTestApp({
+      createClient: (...args) => hooks.createClient(...args),
+      auth: {
         sendCode: async () => ({phoneCodeHash:'fake-code-hash', type:'app'}),
         signIn: async () => ({displayName:'Test'}),
         qr: (...args) => hooks.qr(...args),
         password: (...args) => hooks.password(...args),
         me: async () => ({displayName:'Test'}),
         logout: async () => { hooks.logouts++; },
-      };
-      export const explainError = error => error.message;
-      export const fetchPolls = (...args) => hooks.fetchPolls(...args);
-    `, loader:'js' }));
-  } }],
+      },
+      fetchPolls: (...args) => hooks.fetchPolls(...args),
+    });
+  `,
+  },
 });
 const html = await readFile('src/index.html', 'utf8');
 
 class Node {
-  constructor(tag = 'div') { this.tag = tag; this.value = ''; this.checked = false; this.hidden = false; this.disabled = false; this.open = false; this.children = []; this.handlers = {}; this.attributes = {}; this.classList = {toggle(){}}; }
-  addEventListener(type, handler) { (this.handlers[type] ??= []).push(handler); }
-  async emit(type) { for (const handler of this.handlers[type] || []) await handler({ preventDefault(){} }); }
-  append(...items) { this.children.push(...items); }
-  replaceChildren(...items) { this.children = items; }
-  setAttribute(key, value) { this.attributes[key] = value; }
-  removeAttribute(key) { delete this.attributes[key]; }
-  set src(value) { this.attributes.src = value; }
-  get src() { return this.attributes.src; }
+  constructor(tag = 'div') {
+    this.tag = tag;
+    this.value = '';
+    this.checked = false;
+    this.hidden = false;
+    this.disabled = false;
+    this.open = false;
+    this.children = [];
+    this.handlers = {};
+    this.attributes = {};
+    this.classList = { toggle() {} };
+  }
+  addEventListener(type, handler) {
+    (this.handlers[type] ??= []).push(handler);
+  }
+  async emit(type) {
+    for (const handler of this.handlers[type] || []) await handler({ preventDefault() {} });
+  }
+  append(...items) {
+    this.children.push(...items);
+  }
+  replaceChildren(...items) {
+    this.children = items;
+  }
+  setAttribute(key, value) {
+    this.attributes[key] = value;
+  }
+  removeAttribute(key) {
+    delete this.attributes[key];
+  }
+  set src(value) {
+    this.attributes.src = value;
+  }
+  get src() {
+    return this.attributes.src;
+  }
   focus() {}
-  showModal() { this.open = true; }
-  close() { this.open = false; this.emit('close'); }
+  showModal() {
+    this.open = true;
+  }
+  close() {
+    this.open = false;
+    this.emit('close');
+  }
 }
 function app(values = new Map(), options = {}) {
   const nodes = new Map();
   const timers = new Map();
   let timerId = 0;
   for (const match of html.matchAll(/<([a-z][a-z0-9]*)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
-    const node = new Node(match[1]); node.hidden = /\bhidden\b/.test(match[2]); node.disabled = /\bdisabled\b/.test(match[2]); node.value = match[2].match(/\bvalue="([^"]*)"/)?.[1] ?? ''; nodes.set(match[3], node);
+    const node = new Node(match[1]);
+    node.hidden = /\bhidden\b/.test(match[2]);
+    node.disabled = /\bdisabled\b/.test(match[2]);
+    node.value = match[2].match(/\bvalue="([^"]*)"/)?.[1] ?? '';
+    nodes.set(match[3], node);
   }
   const hooks = {
-    logouts:0, destroyed:0, imports:[], requests:[], qrAttempts:[], passwords:[],
+    logouts: 0,
+    destroyed: 0,
+    imports: [],
+    requests: [],
+    qrAttempts: [],
+    passwords: [],
     qr(client, callbacks) {
       return new Promise((resolve, reject) => {
         hooks.qrAttempts.push({ callbacks, resolve, reject });
-        if (!options.ignoreQrAbort) callbacks.abortSignal.addEventListener('abort', () => reject(callbacks.abortSignal.reason), {once:true});
+        if (!options.ignoreQrAbort)
+          callbacks.abortSignal.addEventListener(
+            'abort',
+            () => reject(callbacks.abortSignal.reason),
+            { once: true },
+          );
       });
     },
     async password(client, password) {
       hooks.passwords.push(password);
       if (password !== 'correct 2FA') throw new Error('Incorrect two-step verification password.');
-      return {displayName:'Test'};
+      return { displayName: 'Test' };
     },
     async fetchPolls(client, links) {
       hooks.requests.push(links);
       if (!options.pollData) throw new Error('Unexpected poll request');
       return options.pollData;
     },
-    createClient(apiId, apiHash) { return {
-      async exportSession() { await options.beforeExport?.(); return 'SYNTHETIC_LOGIN_SESSION_SECRET'; },
-      async getApiCredentials() { return {id:apiId, hash:apiHash}; },
-      async importSession(session) { hooks.imports.push(session); },
-      async destroy() { hooks.destroyed++; },
-    }; },
+    createClient(apiId, apiHash) {
+      return {
+        async exportSession() {
+          await options.beforeExport?.();
+          return 'SYNTHETIC_LOGIN_SESSION_SECRET';
+        },
+        async getApiCredentials() {
+          return { id: apiId, hash: apiHash };
+        },
+        async importSession(session) {
+          hooks.imports.push(session);
+        },
+        async destroy() {
+          hooks.destroyed++;
+        },
+      };
+    },
   };
   runInNewContext(compiled.outputFiles[0].text, {
-    hooks, crypto:webcrypto, TextEncoder, TextDecoder, Uint8Array, WebAssembly, URL, Blob, AbortController, atob, btoa,
-    setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, {fn, delay}); return id; },
-    clearTimeout: id => timers.delete(id),
-    localStorage: {
-      getItem: key => values.get(key) ?? null,
-      setItem: (key, value) => { if (options.denyWrites) throw new Error('denied'); values.set(key, value); },
-      removeItem: key => values.delete(key),
+    hooks,
+    crypto: webcrypto,
+    TextEncoder,
+    TextDecoder,
+    Uint8Array,
+    WebAssembly,
+    URL,
+    Blob,
+    AbortController,
+    atob,
+    btoa,
+    setTimeout: (fn, delay) => {
+      const id = ++timerId;
+      timers.set(id, { fn, delay });
+      return id;
     },
-    document: { getElementById:id => { assert.ok(nodes.has(id), `Missing DOM element: ${id}`); return nodes.get(id); }, createElement:tag => new Node(tag), createTextNode:text => ({textContent:text}), body:new Node('body') },
+    clearTimeout: (id) => timers.delete(id),
+    localStorage: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => {
+        if (options.denyWrites) throw new Error('denied');
+        values.set(key, value);
+      },
+      removeItem: (key) => values.delete(key),
+    },
+    document: {
+      getElementById: (id) => {
+        assert.ok(nodes.has(id), `Missing DOM element: ${id}`);
+        return nodes.get(id);
+      },
+      createElement: (tag) => new Node(tag),
+      createTextNode: (text) => ({ textContent: text }),
+      body: new Node('body'),
+    },
   });
-  const $ = id => nodes.get(id);
-  return { $, values, hooks, timers,
+  const $ = (id) => nodes.get(id);
+  return {
+    $,
+    values,
+    hooks,
+    timers,
     async prepareLogin(method = 'phone', remember = false) {
       await $('connect').emit('click');
       if (method === 'qr') await $('qrLogin').emit('click');
-      $('apiId').value = '12345'; $('apiHash').value = 'abcdef0123456789abcdef0123456789'; $('remember').checked = remember;
+      $('apiId').value = '12345';
+      $('apiHash').value = 'abcdef0123456789abcdef0123456789';
+      $('remember').checked = remember;
       $('phone').value = method === 'phone' ? '+381123456789' : '';
     },
     async login(remember = true) {
@@ -102,7 +197,10 @@ function app(values = new Map(), options = {}) {
       $('code').value = '12345';
       await $('loginForm').emit('submit');
     },
-    async save() { $('savePassword').value = $('saveConfirm').value = 'Test1234'; await $('loginForm').emit('submit'); },
+    async save() {
+      $('savePassword').value = $('saveConfirm').value = 'Test1234';
+      await $('loginForm').emit('submit');
+    },
   };
 }
 
@@ -116,7 +214,8 @@ test('opt-in save, reload, wrong password, unlock and logout', async () => {
   const data = await decryptSession(ciphertext, 'Test1234');
   assert.equal(data.session, 'SYNTHETIC_LOGIN_SESSION_SECRET');
   assert.equal(first.$('login').open, false);
-  for (const id of ['savePassword','saveConfirm','apiId','apiHash','phone','code','password']) assert.equal(first.$(id).value, '');
+  for (const id of ['savePassword', 'saveConfirm', 'apiId', 'apiHash', 'phone', 'code', 'password'])
+    assert.equal(first.$(id).value, '');
 
   const second = app(first.values);
   assert.equal(second.$('connect').textContent, 'Unlock');
@@ -141,7 +240,8 @@ test('opt-in save, reload, wrong password, unlock and logout', async () => {
 test('QR login needs API keys but no phone, refreshes the image, then uses encrypted save and unlock', async () => {
   const view = app();
   await view.prepareLogin('qr', true);
-  const apiId = view.$('apiId'), apiHash = view.$('apiHash');
+  const apiId = view.$('apiId'),
+    apiHash = view.$('apiHash');
   await view.$('phoneLogin').emit('click');
   assert.equal(view.$('phone').required, true);
   await view.$('qrLogin').emit('click');
@@ -162,7 +262,10 @@ test('QR login needs API keys but no phone, refreshes the image, then uses encry
   const signingIn = view.$('loginForm').emit('submit');
   const attempt = view.hooks.qrAttempts[0];
   assert.equal(view.$('loginSubmit').hidden, true);
-  attempt.callbacks.onUrlUpdated('tg://login?token=FIRST_SYNTHETIC_TOKEN', new Date(Date.now() + 30000));
+  attempt.callbacks.onUrlUpdated(
+    'tg://login?token=FIRST_SYNTHETIC_TOKEN',
+    new Date(Date.now() + 30000),
+  );
   const firstImage = view.$('qrCode').src;
   assert.match(firstImage, /^data:image\/gif;base64,/);
   assert.equal(view.$('qrCode').hidden, false);
@@ -172,18 +275,27 @@ test('QR login needs API keys but no phone, refreshes the image, then uses encry
   assert.equal(view.$('qrCode').src, undefined);
   assert.equal(view.$('qrCode').hidden, true);
   assert.equal(view.timers.size, 0);
-  attempt.callbacks.onUrlUpdated('tg://login?token=SECOND_SYNTHETIC_TOKEN', new Date(Date.now() + 30000));
+  attempt.callbacks.onUrlUpdated(
+    'tg://login?token=SECOND_SYNTHETIC_TOKEN',
+    new Date(Date.now() + 30000),
+  );
   assert.notEqual(view.$('qrCode').src, firstImage);
   attempt.callbacks.onQrScanned();
   assert.equal(view.$('qrCode').src, undefined);
   assert.equal(view.timers.size, 0);
-  attempt.resolve({displayName:'QR Test'});
+  attempt.resolve({ displayName: 'QR Test' });
   await signingIn;
   assert.equal(view.$('saveFields').hidden, false);
   assert.equal(view.$('qrFields').hidden, true);
   await view.save();
   const saved = view.values.get(SESSION_KEY);
-  for (const secret of ['SYNTHETIC_LOGIN_SESSION_SECRET', 'SYNTHETIC_TOKEN', 'tg://login', 'abcdef0123456789abcdef0123456789']) assert.ok(!saved.includes(secret));
+  for (const secret of [
+    'SYNTHETIC_LOGIN_SESSION_SECRET',
+    'SYNTHETIC_TOKEN',
+    'tg://login',
+    'abcdef0123456789abcdef0123456789',
+  ])
+    assert.ok(!saved.includes(secret));
   const reloaded = app(view.values);
   await reloaded.$('connect').emit('click');
   assert.equal(reloaded.$('loginMethods').hidden, true);
@@ -217,7 +329,7 @@ test('QR 2FA uses the same pending client and allows retrying an incorrect passw
 
 test('switching from QR to phone or closing aborts the attempt and ignores late QR results', async () => {
   for (const action of ['phoneLogin', 'cancelLogin']) {
-    const view = app(new Map(), {ignoreQrAbort:true});
+    const view = app(new Map(), { ignoreQrAbort: true });
     await view.prepareLogin('qr');
     const signingIn = view.$('loginForm').emit('submit');
     const attempt = view.hooks.qrAttempts[0];
@@ -231,7 +343,7 @@ test('switching from QR to phone or closing aborts the attempt and ignores late 
     const heading = view.$('loginHeading').textContent;
     attempt.callbacks.onUrlUpdated('tg://login?token=LATE', new Date(Date.now() + 30000));
     attempt.callbacks.onQrScanned();
-    attempt.resolve({displayName:'Late user'});
+    attempt.resolve({ displayName: 'Late user' });
     await signingIn;
     assert.equal(view.$('qrCode').src, undefined);
     assert.equal(view.$('loginHeading').textContent, heading);
@@ -288,7 +400,7 @@ test('global topic filter starts at three, rerenders without Telegram, and disab
 });
 
 test('one link submits four inferred polls, persists only manual input, and detects changes to effective links', async () => {
-  const view = app(new Map(), {pollData:demo()});
+  const view = app(new Map(), { pollData: demo() });
   view.$('link0').value = 'https://t.me/groupchat/123';
   await view.$('link0').emit('input');
   assert.equal(view.$('link1').placeholder, 'https://t.me/groupchat/124');
@@ -300,7 +412,10 @@ test('one link submits four inferred polls, persists only manual input, and dete
   assert.equal(reloaded.$('pollLinks').open, false);
   await view.login(false);
   await view.$('pollForm').emit('submit');
-  assert.deepEqual(Array.from(view.hooks.requests[0], link => link.messageId), [123, 124, 125, 126]);
+  assert.deepEqual(
+    Array.from(view.hooks.requests[0], (link) => link.messageId),
+    [123, 124, 125, 126],
+  );
   assert.equal(view.$('export').disabled, false);
   assert.equal(view.$('pollLinks').open, false);
   // A manual value equal to the automatic one still identifies the same polls.
@@ -320,7 +435,7 @@ test('one link submits four inferred polls, persists only manual input, and dete
 });
 
 test('failed refreshes preserve the disclosure state; only a successful refresh collapses it', async () => {
-  const options = {pollData:demo()};
+  const options = { pollData: demo() };
   const view = app(new Map(), options);
   view.$('link0').value = 'https://t.me/groupchat/123';
   await view.$('link0').emit('input');
@@ -354,7 +469,7 @@ test('corrupt preferences and denied storage do not prevent use', async () => {
   const invalid = app(new Map([[PREFERENCES_KEY, '{"links":[1,2,3,4],"topicMinimum":-2}']]));
   assert.equal(invalid.$('link0').value, '');
   assert.equal(invalid.$('topicMinimum').value, '3');
-  const denied = app(new Map(), {denyWrites:true});
+  const denied = app(new Map(), { denyWrites: true });
   denied.$('link0').value = 'https://t.me/groupchat/123';
   await denied.$('link0').emit('input');
   assert.equal(denied.$('link3').placeholder, 'https://t.me/groupchat/126');
@@ -368,7 +483,7 @@ test('login remains memory-only when saving is declined or storage fails', async
   assert.equal(memory.$('login').open, false);
   assert.equal(memory.$('disconnect').hidden, false);
 
-  const denied = app(new Map(), {denyWrites:true});
+  const denied = app(new Map(), { denyWrites: true });
   await denied.login();
   await denied.save();
   assert.equal(denied.$('login').open, true);
@@ -380,7 +495,10 @@ test('login remains memory-only when saving is declined or storage fails', async
 });
 
 test('forgetting only removes encrypted session; cancelled asynchronous saving cannot write later', async () => {
-  const values = new Map([[SESSION_KEY, 'damaged-envelope'], ['poll-intersections.preferences.v1', '{"links":["a","b","c","d"],"topicMinimum":3}']]);
+  const values = new Map([
+    [SESSION_KEY, 'damaged-envelope'],
+    ['poll-intersections.preferences.v1', '{"links":["a","b","c","d"],"topicMinimum":3}'],
+  ]);
   const forgotten = app(values);
   await forgotten.$('connect').emit('click');
   await forgotten.$('forgetSession').emit('click');
@@ -389,7 +507,12 @@ test('forgetting only removes encrypted session; cancelled asynchronous saving c
   assert.equal(forgotten.$('credentials').hidden, false);
 
   let release;
-  const cancelled = app(new Map(), {beforeExport:() => new Promise(resolve => {release=resolve;})});
+  const cancelled = app(new Map(), {
+    beforeExport: () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  });
   await cancelled.login();
   const saving = cancelled.save();
   await cancelled.$('cancelLogin').emit('click');

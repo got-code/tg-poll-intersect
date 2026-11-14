@@ -1,84 +1,258 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-__SCRIPT_HASH__' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; connect-src wss://pluto.web.telegram.org wss://venus.web.telegram.org wss://aurora.web.telegram.org wss://vesta.web.telegram.org wss://flora.web.telegram.org; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'">
-  <title>Poll Intersections</title>
-  <style>__APP_STYLE__</style>
-</head>
-<body>
-<div class="wrap">
-  <header>
-    <div class="brand"><span class="mark" aria-hidden="true"></span>Poll Intersections</div>
-    <div class="topright"><span class="badge">On your device</span><button id="connect" class="text">Sign in to Telegram</button><button id="disconnect" class="text" hidden>Sign out</button></div>
-  </header>
-  <main>
-    <section class="intro"><div class="eyebrow">Four polls · one plan</div><h1>Find where everyone’s plans meet.</h1><p>Compare topics, dates, times and places chosen by the same participants.</p></section>
-    <section class="panel" aria-labelledby="pollHeading">
-      <form id="pollForm">
-        <details id="pollLinks" open>
-          <summary id="pollLinksToggle" class="paneltop"><h2 id="pollHeading">Poll links<span id="pollLinksCount" class="muted small"></span></h2><span class="links-toggle" aria-hidden="true"><span class="links-edit">Edit</span><span class="links-hide">Hide</span> <span class="links-arrow">▾</span></span></summary>
-        <div class="links">
-          <label><span class="num">01</span>Topic<input id="link0" type="url" placeholder="https://t.me/group/123" required autocomplete="off" spellcheck="false" aria-label="Topic poll link" aria-describedby="linkHint0"><span id="linkHint0" class="field-hint">Start with the topic poll.</span></label>
-          <label><span class="num">02</span>Date<input id="link1" type="url" placeholder="Next message, or paste a link" autocomplete="off" spellcheck="false" aria-label="Date poll link" aria-describedby="linkHint1"><span id="linkHint1" class="field-hint">Leave blank to use the next message.</span></label>
-          <label><span class="num">03</span>Time<input id="link2" type="url" placeholder="Next message, or paste a link" autocomplete="off" spellcheck="false" aria-label="Time poll link" aria-describedby="linkHint2"><span id="linkHint2" class="field-hint">Leave blank to use the next message.</span></label>
-          <label><span class="num">04</span>Place<input id="link3" type="url" placeholder="Next message, or paste a link" autocomplete="off" spellcheck="false" aria-label="Place poll link" aria-describedby="linkHint3"><span id="linkHint3" class="field-hint">Leave blank to use the next message.</span></label>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss://pluto.web.telegram.org wss://venus.web.telegram.org wss://aurora.web.telegram.org wss://vesta.web.telegram.org wss://flora.web.telegram.org; img-src data:; base-uri 'none'; form-action 'none'; object-src 'none'"
+    />
+    <title>Poll Intersections</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand"><span class="mark" aria-hidden="true"></span>Poll Intersections</div>
+        <div class="topright">
+          <span class="badge">On your device</span
+          ><button id="connect" class="text">Sign in to Telegram</button
+          ><button id="disconnect" class="text" hidden>Sign out</button>
         </div>
-        <button id="clearLinks" type="button" class="text" hidden>Clear links</button>
+      </header>
+      <main>
+        <section class="intro">
+          <div class="eyebrow">Four polls · one plan</div>
+          <h1>Find where everyone’s plans meet.</h1>
+          <p>Compare topics, dates, times and places chosen by the same participants.</p>
+        </section>
+        <section class="panel" aria-labelledby="pollHeading">
+          <form id="pollForm">
+            <details id="pollLinks" open>
+              <summary id="pollLinksToggle" class="paneltop">
+                <h2 id="pollHeading">
+                  Poll links<span id="pollLinksCount" class="muted small"></span>
+                </h2>
+                <span class="links-toggle" aria-hidden="true"
+                  ><span class="links-edit">Edit</span><span class="links-hide">Hide</span>
+                  <span class="links-arrow">▾</span></span
+                >
+              </summary>
+              <div class="links">
+                <label
+                  ><span class="num">01</span>Topic<input
+                    id="link0"
+                    type="url"
+                    placeholder="https://t.me/group/123"
+                    required
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="Topic poll link"
+                    aria-describedby="linkHint0"
+                  /><span id="linkHint0" class="field-hint">Start with the topic poll.</span></label
+                >
+                <label
+                  ><span class="num">02</span>Date<input
+                    id="link1"
+                    type="url"
+                    placeholder="Next message, or paste a link"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="Date poll link"
+                    aria-describedby="linkHint1"
+                  /><span id="linkHint1" class="field-hint"
+                    >Leave blank to use the next message.</span
+                  ></label
+                >
+                <label
+                  ><span class="num">03</span>Time<input
+                    id="link2"
+                    type="url"
+                    placeholder="Next message, or paste a link"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="Time poll link"
+                    aria-describedby="linkHint2"
+                  /><span id="linkHint2" class="field-hint"
+                    >Leave blank to use the next message.</span
+                  ></label
+                >
+                <label
+                  ><span class="num">04</span>Place<input
+                    id="link3"
+                    type="url"
+                    placeholder="Next message, or paste a link"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="Place poll link"
+                    aria-describedby="linkHint3"
+                  /><span id="linkHint3" class="field-hint"
+                    >Leave blank to use the next message.</span
+                  ></label
+                >
+              </div>
+              <button id="clearLinks" type="button" class="text" hidden>Clear links</button>
+            </details>
+            <div class="actions">
+              <button class="primary" id="refresh" type="submit">
+                Refresh results <span aria-hidden="true">↗</span></button
+              ><button id="demo" type="button">Demo</button
+              ><span class="hint" id="preferencesHint"
+                >Links and topic minimum are saved in this browser.</span
+              >
+            </div>
+          </form>
+          <p id="status" class="status" role="status" aria-live="polite"></p>
+        </section>
+        <section class="results" aria-labelledby="resultHeading">
+          <div class="resulthead">
+            <div>
+              <h2 id="resultHeading">By date</h2>
+              <div id="resultMeta" class="muted small">Participants and options for each date</div>
+            </div>
+            <button id="export" disabled>Download CSV</button>
+          </div>
+          <label class="topic-filter"
+            >Minimum people per topic<input
+              id="topicMinimum"
+              type="number"
+              min="0"
+              step="1"
+              value="3"
+              inputmode="numeric"
+          /></label>
+          <p class="vote-legend">
+            3(+2?) means 3 explicit + 2 implicit participants. Dashed names are implicit for this
+            row.
+          </p>
+          <div id="demoLabel" class="demoLabel" hidden>Demo · fictional participants and votes</div>
+          <div id="empty" class="empty">
+            <strong>Who is available on each date?</strong>
+            <p>
+              Paste the first link if your four polls are consecutive, or enter each link
+              separately. Refresh to load votes, or try the demo.
+            </p>
+          </div>
+          <div id="rows"></div>
+          <p id="resultFooter" class="resultsfooter" hidden>
+            Hover, focus or tap a name for vote times in your local time zone and its Telegram ID.
+          </p>
+        </section>
+        <p class="notice">
+          Includes anyone who voted in at least one poll. An unanswered poll counts as an implicit
+          vote for all its options. Within a date, a match is implicit if either the date or the
+          option is assumed.
+        </p>
+      </main>
+      <footer>
+        Votes are processed on your device.
+        <details>
+          <summary>Privacy</summary>
+          <p>
+            The app connects directly to Telegram. No application backend or analytics. It never
+            votes or sends messages; it may read your chat list to resolve private group links.
+          </p>
+          <p>
+            “Remember login” encrypts your session and API keys with a separate password in this
+            browser. Passwords and login codes are never saved. Reloading clears results and locks
+            the saved login. “Sign out” removes it and attempts server logout; you can revoke
+            sessions in Telegram → Settings → Devices. The session has full account permissions.
+            Encryption protects the stored copy, not an unlocked page or compromised device.
+          </p>
         </details>
-        <div class="actions"><button class="primary" id="refresh" type="submit">Refresh results <span aria-hidden="true">↗</span></button><button id="demo" type="button">Demo</button><span class="hint" id="preferencesHint">Links and topic minimum are saved in this browser.</span></div>
+      </footer>
+    </div>
+    <dialog id="login" aria-labelledby="loginHeading" aria-describedby="loginHint">
+      <h2 id="loginHeading">Sign in to Telegram</h2>
+      <p class="muted" id="loginHint">Choose how to sign in.</p>
+      <form id="loginForm" autocomplete="off">
+        <div id="credentials">
+          <label
+            >API ID<input
+              id="apiId"
+              inputmode="numeric"
+              pattern="[0-9]+"
+              required
+              autocomplete="off"
+          /></label>
+          <label
+            >API hash<input
+              id="apiHash"
+              type="password"
+              required
+              minlength="32"
+              maxlength="32"
+              autocomplete="off"
+          /></label>
+          <p class="muted small">
+            Get your API keys at
+            <a href="https://my.telegram.org/apps" target="_blank" rel="noreferrer noopener"
+              >my.telegram.org/apps</a
+            >. Both sign-in methods use these keys.
+          </p>
+          <label class="check"
+            ><input id="remember" type="checkbox" />Remember login in this browser</label
+          >
+        </div>
+        <div id="loginMethods" class="login-methods" role="group" aria-label="Sign-in method">
+          <button id="phoneLogin" type="button" aria-pressed="true">Phone number</button>
+          <button id="qrLogin" type="button" aria-pressed="false">QR code</button>
+        </div>
+        <label id="phoneLabel"
+          >Phone number<input id="phone" type="tel" placeholder="+381…" required autocomplete="off"
+        /></label>
+        <div id="qrFields" hidden>
+          <img id="qrCode" class="login-qr" alt="Telegram sign-in QR code" hidden />
+          <p class="muted">
+            On another device, open Telegram → Settings → Devices → Link Desktop Device (or Scan
+            QR), then scan this code and confirm sign-in.
+          </p>
+        </div>
+        <label id="codeLabel" hidden
+          >Telegram code<input id="code" inputmode="numeric" autocomplete="one-time-code"
+        /></label>
+        <label id="passwordLabel" hidden
+          >Two-step verification password<input id="password" type="password" autocomplete="off"
+        /></label>
+        <label id="unlockLabel" hidden
+          >Saved login password<input
+            id="unlockPassword"
+            type="password"
+            maxlength="1024"
+            autocomplete="off"
+        /></label>
+        <div id="saveFields" hidden>
+          <label
+            >New saved login password<input
+              id="savePassword"
+              type="password"
+              minlength="8"
+              maxlength="1024"
+              autocomplete="new-password"
+              aria-describedby="savePasswordHint"
+          /></label>
+          <p id="savePasswordHint" class="muted small">
+            8–1024 characters, including lowercase, uppercase and a digit.
+          </p>
+          <label
+            >Repeat password<input
+              id="saveConfirm"
+              type="password"
+              minlength="8"
+              maxlength="1024"
+              autocomplete="new-password"
+          /></label>
+        </div>
+        <p id="loginStatus" class="status" role="status" aria-live="polite"></p>
+        <div class="actions">
+          <button id="loginSubmit" type="submit" class="primary">Send code</button
+          ><button id="skipSave" type="button" hidden>Continue without saving</button
+          ><button id="forgetSession" type="button" hidden>Forget and sign in again</button
+          ><button id="cancelLogin" type="button">Cancel</button>
+        </div>
       </form>
-      <p id="status" class="status" role="status" aria-live="polite"></p>
-    </section>
-    <section class="results" aria-labelledby="resultHeading">
-      <div class="resulthead"><div><h2 id="resultHeading">By date</h2><div id="resultMeta" class="muted small">Participants and options for each date</div></div><button id="export" disabled>Download CSV</button></div>
-      <label class="topic-filter">Minimum people per topic<input id="topicMinimum" type="number" min="0" step="1" value="3" inputmode="numeric"></label>
-      <p class="vote-legend">3(+2?) means 3 explicit + 2 implicit participants. Dashed names are implicit for this row.</p>
-      <div id="demoLabel" class="demoLabel" hidden>Demo · fictional participants and votes</div>
-      <div id="empty" class="empty"><strong>Who is available on each date?</strong><p>Paste the first link if your four polls are consecutive, or enter each link separately. Refresh to load votes, or try the demo.</p></div>
-      <div id="rows"></div>
-      <p id="resultFooter" class="resultsfooter" hidden>Hover, focus or tap a name for vote times in your local time zone and its Telegram ID.</p>
-    </section>
-    <p class="notice">Includes anyone who voted in at least one poll. An unanswered poll counts as an implicit vote for all its options. Within a date, a match is implicit if either the date or the option is assumed.</p>
-  </main>
-  <footer>
-    Votes are processed on your device.
-    <details>
-      <summary>Privacy</summary>
-      <p>The app connects directly to Telegram. No application backend or analytics. It never votes or sends messages; it may read your chat list to resolve private group links.</p>
-      <p>“Remember login” encrypts your session and API keys with a separate password in this browser. Passwords and login codes are never saved. Reloading clears results and locks the saved login. “Sign out” removes it and attempts server logout; you can revoke sessions in Telegram → Settings → Devices. The session has full account permissions. Encryption protects the stored copy, not an unlocked page or compromised device.</p>
-    </details>
-  </footer>
-</div>
-<dialog id="login" aria-labelledby="loginHeading" aria-describedby="loginHint">
-  <h2 id="loginHeading">Sign in to Telegram</h2>
-  <p class="muted" id="loginHint">Choose how to sign in.</p>
-  <form id="loginForm" autocomplete="off">
-    <div id="credentials">
-      <label>API ID<input id="apiId" inputmode="numeric" pattern="[0-9]+" required autocomplete="off"></label>
-      <label>API hash<input id="apiHash" type="password" required minlength="32" maxlength="32" autocomplete="off"></label>
-      <p class="muted small">Get your API keys at <a href="https://my.telegram.org/apps" target="_blank" rel="noreferrer noopener">my.telegram.org/apps</a>. Both sign-in methods use these keys.</p>
-      <label class="check"><input id="remember" type="checkbox">Remember login in this browser</label>
-    </div>
-    <div id="loginMethods" class="login-methods" role="group" aria-label="Sign-in method">
-      <button id="phoneLogin" type="button" aria-pressed="true">Phone number</button>
-      <button id="qrLogin" type="button" aria-pressed="false">QR code</button>
-    </div>
-    <label id="phoneLabel">Phone number<input id="phone" type="tel" placeholder="+381…" required autocomplete="off"></label>
-    <div id="qrFields" hidden>
-      <img id="qrCode" class="login-qr" alt="Telegram sign-in QR code" hidden>
-      <p class="muted">On another device, open Telegram → Settings → Devices → Link Desktop Device (or Scan QR), then scan this code and confirm sign-in.</p>
-    </div>
-    <label id="codeLabel" hidden>Telegram code<input id="code" inputmode="numeric" autocomplete="one-time-code"></label>
-    <label id="passwordLabel" hidden>Two-step verification password<input id="password" type="password" autocomplete="off"></label>
-    <label id="unlockLabel" hidden>Saved login password<input id="unlockPassword" type="password" maxlength="1024" autocomplete="off"></label>
-    <div id="saveFields" hidden><label>New saved login password<input id="savePassword" type="password" minlength="8" maxlength="1024" autocomplete="new-password" aria-describedby="savePasswordHint"></label><p id="savePasswordHint" class="muted small">8–1024 characters, including lowercase, uppercase and a digit.</p><label>Repeat password<input id="saveConfirm" type="password" minlength="8" maxlength="1024" autocomplete="new-password"></label></div>
-    <p id="loginStatus" class="status" role="status" aria-live="polite"></p>
-    <div class="actions"><button id="loginSubmit" type="submit" class="primary">Send code</button><button id="skipSave" type="button" hidden>Continue without saving</button><button id="forgetSession" type="button" hidden>Forget and sign in again</button><button id="cancelLogin" type="button">Cancel</button></div>
-  </form>
-</dialog>
-<script>__APP_SCRIPT__</script>
-</body>
+    </dialog>
+    <script type="module" src="/main.ts"></script>
+  </body>
 </html>

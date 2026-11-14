@@ -1,32 +1,47 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPollForm } from '../src/ui/poll-form.mjs';
-import { PREFERENCES_KEY } from '../src/infrastructure/preferences.mjs';
+import { createPollForm } from '../src/ui/poll-form.ts';
+import * as preferences from '../src/infrastructure/preferences.ts';
+const { PREFERENCES_KEY } = preferences;
 
-afterEach(() => { delete globalThis.document; delete globalThis.localStorage; });
+afterEach(() => {
+  delete globalThis.document;
+  delete globalThis.localStorage;
+});
 
 function setup(links = ['', '', '', '']) {
   const nodes = new Map();
-  const storage = new Map([[PREFERENCES_KEY, JSON.stringify({links, topicMinimum:3})]]);
+  const storage = new Map([[PREFERENCES_KEY, JSON.stringify({ links, topicMinimum: 3 })]]);
   globalThis.localStorage = {
-    getItem:key => storage.get(key) ?? null,
-    setItem:(key, value) => storage.set(key, value),
+    getItem: (key) => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value),
   };
-  globalThis.document = {activeElement:null, getElementById(id) {
-    if (!nodes.has(id)) nodes.set(id, {
-      value:'', handlers:{}, setAttribute() {},
-      addEventListener(type, callback) { this.handlers[type] = callback; },
-      focus() { document.activeElement = this; },
-    });
-    return nodes.get(id);
-  }};
-  const form = createPollForm({onLinksChange() {}, onMinimumChange() {}});
-  return {form, storage, $:id => nodes.get(id)};
+  globalThis.document = {
+    activeElement: null,
+    getElementById(id) {
+      if (!nodes.has(id))
+        nodes.set(id, {
+          value: '',
+          handlers: {},
+          setAttribute() {},
+          addEventListener(type, callback) {
+            this.handlers[type] = callback;
+          },
+          focus() {
+            document.activeElement = this;
+          },
+        });
+      return nodes.get(id);
+    },
+  };
+  const form = createPollForm({ preferences, onLinksChange() {}, onMinimumChange() {} });
+  return { form, storage, $: (id) => nodes.get(id) };
 }
 
 test('only valid saved links start collapsed, including inferred links; valid typing keeps fields open', () => {
   for (const links of [
-    ['', '', '', ''], ['bad', '', '', ''],
+    ['', '', '', ''],
+    ['bad', '', '', ''],
     ['https://t.me/groupchat/123', 'https://t.me/groupchat/123', '', ''],
     ['https://t.me/groupchat/2147483647', '', '', ''],
   ]) {
@@ -41,7 +56,10 @@ test('only valid saved links start collapsed, including inferred links; valid ty
   initial.$('link0').value = 'https://t.me/groupchat/123';
   initial.$('link0').handlers.input();
   assert.equal(initial.$('pollLinks').open, true);
-  assert.deepEqual(Object.keys(JSON.parse(initial.storage.get(PREFERENCES_KEY))).sort(), ['links', 'topicMinimum']);
+  assert.deepEqual(Object.keys(JSON.parse(initial.storage.get(PREFERENCES_KEY))).sort(), [
+    'links',
+    'topicMinimum',
+  ]);
 });
 
 test('semantic, duplicate and native validation errors reveal the fields; semantic errors focus their field', () => {

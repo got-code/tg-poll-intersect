@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { demo } from '../src/demo.ts';
-import { groupByDate, filterTopics } from '../src/domain/polls.ts';
+import { demo } from '../src/modules/polls/infrastructure/demo.ts';
+import { groupByDate, filterTopics } from '../src/modules/polls/domain/polls.ts';
 
 test('demo has ten dates, topics and people, three times and places, and one-to-three-word names', () => {
   const data = demo();
@@ -21,7 +21,7 @@ test('demo has ten dates, topics and people, three times and places, and one-to-
       assert.ok(option.voters.every((id) => data.names[id]));
     }
   const groups = groupByDate(data.polls);
-  assert.equal(filterTopics(groups).length, 10);
+  assert.equal(filterTopics(groups, 3).length, 10);
   assert.equal(filterTopics(groups, 11).length, 0);
   assert.ok(groups.some((group) => group.ids.length === 10));
 });
@@ -42,7 +42,7 @@ test('demo includes full votes, single and multiple omissions, multiple choices,
     '1000',
   ]);
   assert.equal(polls[0].options.filter((option) => option.voters.includes('2')).length > 1, true);
-  assert.deepEqual(group.votesByPerson['8'][0], { label: 'Topic', voted: true, at: null });
+  assert.deepEqual(group.votesByPerson['8'][0], { kind: 'topic', voted: true, at: null });
   assert.ok(group.votesByPerson['1'].every((vote) => Number.isInteger(vote.at) && vote.at > 0));
   const fresh = demo();
   polls[0].options[0].voters.length = 0;

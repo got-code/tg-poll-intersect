@@ -1,5 +1,5 @@
-import { errorDetails } from '../../domain/errors.ts';
-import { isRecord } from '../../domain/validation.ts';
+import { readTelegramFailure } from './errors.ts';
+import { isRecord } from '../validation.ts';
 
 const AUTH_METHODS = new Set([
   'auth.sendCode',
@@ -12,55 +12,28 @@ const AUTH_METHODS = new Set([
   'account.getPassword',
   'users.getUsers',
 ]);
-const RPC_ERRORS = new Set([
-  'API_ID_INVALID',
-  'API_ID_PUBLISHED_FLOOD',
-  'AUTH_RESTART',
-  'PHONE_NUMBER_INVALID',
-  'PHONE_NUMBER_BANNED',
-  'PHONE_NUMBER_FLOOD',
-  'PHONE_NUMBER_UNOCCUPIED',
-  'PHONE_NUMBER_APP_SIGNUP_FORBIDDEN',
-  'PHONE_CODE_INVALID',
-  'PHONE_CODE_EMPTY',
-  'PHONE_CODE_EXPIRED',
-  'PHONE_CODE_HASH_EMPTY',
-  'PHONE_CODE_HASH_INVALID',
-  'PHONE_PASSWORD_FLOOD',
-  'PHONE_PASSWORD_PROTECTED',
-  'PASSWORD_HASH_INVALID',
-  'PASSWORD_EMPTY',
-  'SESSION_PASSWORD_NEEDED',
-  'SESSION_REVOKED',
-  'AUTH_KEY_UNREGISTERED',
-  'SMS_CODE_CREATE_FAILED',
-  'SEND_CODE_UNAVAILABLE',
-  'UPDATE_APP_TO_LOGIN',
-  'AUTH_TOKEN_EXPIRED',
-  'AUTH_TOKEN_INVALID',
-  'AUTH_TOKEN_INVALID1',
-  'AUTH_TOKEN_ALREADY_ACCEPTED',
-  'EMAIL_UNCONFIRMED',
-  'EMAIL_NOT_ALLOWED',
-  'EMAIL_INVALID',
+const POLL_METHODS = new Set([
+  'messages.getPollVotes',
+  'messages.getMessages',
+  'channels.getMessages',
+  'contacts.resolveUsername',
+  'channels.getChannels',
+  'messages.getDialogs',
 ]);
 
 function errorSummary(error: unknown) {
-  const details = errorDetails(error);
-  const text = details.text;
-  const rpcError =
-    RPC_ERRORS.has(text) ||
-    (typeof text === 'string' &&
-      /^(?:FLOOD_WAIT|FLOOD_PREMIUM_WAIT|PHONE_MIGRATE|NETWORK_MIGRATE|USER_MIGRATE|AUTH_RESTART)_\d{1,8}$/.test(
-        text,
-      ))
-      ? text
-      : undefined;
+  const details = readTelegramFailure(error);
   return {
     error:
-      rpcError ??
-      (/timed?\s*out|timeout/i.test(details.message) ? 'TIMEOUT' : 'UNRECOGNIZED_ERROR'),
-    ...(Number.isInteger(details.code) ? { code: details.code } : {}),
+      details.rpcCode ??
+      (details.kind === 'unexpected'
+        ? 'UNRECOGNIZED_ERROR'
+        : details.kind.toUpperCase().replaceAll('-', '_')),
+    ...(details.status === undefined ? {} : { code: details.status }),
+    ...(details.retryAfterSeconds === undefined
+      ? {}
+      : { retryAfterSeconds: details.retryAfterSeconds }),
+    ...(details.timeoutMs === undefined ? {} : { timeoutMs: details.timeoutMs }),
   };
 }
 
@@ -97,17 +70,19 @@ export function createTelegramDiagnostics(
     method: { _: string },
     invoke: () => Promise<Response>,
   ): Promise<Response> {
-    if (!AUTH_METHODS.has(method?._)) return invoke();
+    const auth = AUTH_METHODS.has(method?._);
+    if (!auth && !POLL_METHODS.has(method?._)) return invoke();
     const id = ++sequence;
     const prefix = `[Telegram #${id}]`;
     const start = Date.now();
-    log(`${prefix} → ${method._}`);
+    if (auth) log(`${prefix} → ${method._}`);
     try {
       const response = await invoke();
-      log(
-        `${prefix} ← ${method._}`,
-        JSON.stringify({ ...responseSummary(response), elapsedMs: Date.now() - start }),
-      );
+      if (auth)
+        log(
+          `${prefix} ← ${method._}`,
+          JSON.stringify({ ...responseSummary(response), elapsedMs: Date.now() - start }),
+        );
       return response;
     } catch (error) {
       log(

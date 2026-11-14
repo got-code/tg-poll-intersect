@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { createHash, webcrypto } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { build } from 'esbuild';
-import { groupByDate } from '../src/domain/polls.ts';
-import { parseLink } from '../src/domain/links.ts';
+import { groupByDate } from '../src/modules/polls/domain/polls.ts';
+import { parseLink } from '../src/modules/polls/application/links.ts';
 
 const require = createRequire(import.meta.url);
 const wasmPath = require.resolve('@mtcute/wasm/mtcute.wasm', {
@@ -33,8 +33,10 @@ const result = await build({
   stdin: {
     contents: `
   export * from './src/infrastructure/telegram/client.ts';
-  export * from './src/infrastructure/telegram/auth.ts';
-  export * from './src/infrastructure/telegram/polls.ts';
+  export * from './src/modules/auth/infrastructure/telegram.ts';
+  export * from './src/modules/polls/infrastructure/telegram.ts';
+  export { createPollSource } from './src/modules/polls/infrastructure/source.ts';
+  export { PasswordRequiredError, UserFacingError } from './src/application/errors.ts';
   export { BaseTelegramClient } from '@mtcute/web';
   export { writeStringSession } from '@mtcute/web/utils.js';
 `,
@@ -96,6 +98,31 @@ test('the static build contains local JS, CSS, WASM and dependency licenses with
   assert.ok(licenses.includes('Apache License'));
 });
 
+test('the initial JavaScript stays below 100 kB and both Telegram adapters are dynamically loaded', async () => {
+  const manifest = JSON.parse(await readFile('dist/.vite/manifest.json', 'utf8'));
+  const initial = new Set();
+  function visit(key) {
+    if (initial.has(key)) return;
+    initial.add(key);
+    for (const dependency of manifest[key].imports ?? []) visit(dependency);
+  }
+  visit('index.html');
+  const bytes = await Promise.all(
+    [...initial].map(async (key) => (await readFile(join('dist', manifest[key].file))).length),
+  );
+  assert.ok(
+    bytes.reduce((total, size) => total + size, 0) < 100000,
+    'SDK code must stay out of the initial static import graph',
+  );
+  for (const key of [
+    'modules/auth/infrastructure/telegram.ts',
+    'modules/polls/infrastructure/telegram.ts',
+  ]) {
+    assert.equal(manifest[key].isDynamicEntry, true, key);
+    assert.equal(initial.has(key), false, key);
+  }
+});
+
 test('actual SDK restores an exported session offline using memory storage, even with localStorage denied', async () => {
   const dc = { id: 2, ipAddress: '149.154.167.51', port: 443 };
   const session = adapter.writeStringSession({
@@ -147,9 +174,7 @@ test('actual SDK send-code response passes through client diagnostics without ex
     const sent = await adapter.auth.sendCode(client, '+381 123 456 789');
     assert.equal(request._, 'auth.sendCode');
     assert.equal(request.phoneNumber, '381123456789');
-    assert.equal(sent.type, 'app');
-    assert.equal(sent.nextType, 'sms');
-    assert.equal(sent.timeout, 60);
+    assert.deepEqual(sent, { codeToken: 'SECRET_PHONE_CODE_HASH', delivery: 'app' });
     const logs = JSON.stringify(entries);
     assert.ok(logs.includes('auth.sentCodeTypeApp'));
     assert.ok(logs.includes('auth.codeTypeSms'));
@@ -215,7 +240,7 @@ test('actual SDK QR flow refreshes expired tokens, accepts updates without enabl
         scanned++;
       },
     });
-    assert.equal(signedIn.displayName, 'QR user');
+    assert.deepEqual(signedIn, { displayName: 'QR user' });
     assert.deepEqual(
       urls.map(([url]) => url),
       ['tg://login?token=Af8', 'tg://login?token=Av8'],
@@ -263,7 +288,10 @@ test('actual SDK QR flow propagates 2FA and aborts cleanly without leaving an up
             queueMicrotask(() => controller.abort(error));
           },
         }),
-        (value) => value === error,
+        (value) =>
+          mode === '2fa'
+            ? value instanceof adapter.PasswordRequiredError
+            : value instanceof adapter.UserFacingError && !value.message.includes(error.message),
       );
       assert.equal(client.onServerUpdate.length, 0);
     } finally {
@@ -363,8 +391,20 @@ function fakeTelegram({
 const links = [1, 2, 3, 4].map((id) => parseLink(`https://t.me/groupchat/${id}`));
 
 test('Telegram adapter reads four real TL-shaped poll fixtures, pages voters, keeps IDs distinct', async () => {
+  let current = null;
+  const source = adapter.createPollSource(() => current);
+  await assert.rejects(
+    source.load(links, () => {}),
+    /Sign in to Telegram first/,
+  );
   const client = fakeTelegram();
-  const data = await adapter.fetchPolls(client, links, () => {});
+  current = client;
+  const progress = [];
+  const data = await source.load(links, (event) => progress.push(event));
+  assert.deepEqual(progress, [
+    ...[1, 2, 3, 4].map((index) => ({ kind: 'loading', index, total: 4 })),
+    { kind: 'checking' },
+  ]);
   assert.equal(client.voterCalls, 8);
   assert.equal(data.polls.length, 4);
   assert.equal(Object.keys(data.names).length, 2);
@@ -372,6 +412,11 @@ test('Telegram adapter reads four real TL-shaped poll fixtures, pages voters, ke
   const [group] = groupByDate(data.polls);
   assert.equal(group.ids.length, 2);
   assert.ok(group.sections.every((section) => section.options[0].ids.length === 2));
+  current = null;
+  await assert.rejects(
+    source.load(links, () => {}),
+    /Sign in to Telegram first/,
+  );
 });
 
 test('Telegram adapter carries vote times for user and chat voters and merges multiple choices by latest time', async () => {
@@ -437,4 +482,14 @@ test('private links resolve through actual SDK dialog peers when the access hash
   assert.equal(data.polls.length, 4);
   assert.equal(dialogCalls, 4);
   assert.equal(client.voterCalls, 8);
+});
+
+test('the Telegram adapter rejects channel IDs that cannot be represented as a safe SDK peer', async () => {
+  const links = [1, 2, 3, 4].map((id) =>
+    parseLink(`https://t.me/c/${Number.MAX_SAFE_INTEGER}/${id}`),
+  );
+  await assert.rejects(
+    adapter.fetchPolls(fakeTelegram(), links, () => {}),
+    /Invalid group ID/,
+  );
 });

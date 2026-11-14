@@ -5,7 +5,7 @@ import {
   nextMessageLink,
   resolveLinkValues,
   linkIdentity,
-} from '../src/domain/links.ts';
+} from '../src/modules/polls/application/links.ts';
 
 test('consecutive links preserve public, private and forum paths and URL parameters', () => {
   for (const first of [

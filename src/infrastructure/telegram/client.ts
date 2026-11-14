@@ -1,5 +1,5 @@
 import { BaseTelegramClient, MemoryStorage, WebCryptoProvider, WebPlatform } from '@mtcute/web';
-import { UserFacingError } from '../../domain/errors.ts';
+import { UserFacingError } from '../../application/errors.ts';
 import { createTelegramDiagnostics } from './diagnostics.ts';
 import type { WebCryptoProviderOptions } from '@mtcute/web';
 

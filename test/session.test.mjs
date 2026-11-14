@@ -8,8 +8,8 @@ import {
   readSavedSession,
   hasSavedSession,
   forgetSavedSession,
-  validateSavePassword,
-} from '../src/infrastructure/session.ts';
+} from '../src/modules/auth/infrastructure/saved-session.ts';
+import { validateSavePassword } from '../src/modules/auth/application/save-password.ts';
 
 globalThis.crypto ??= webcrypto;
 const fixture = {
@@ -43,7 +43,7 @@ test('saved session decrypts across reloads; only ciphertext and public crypto p
     'v',
   ]);
   // New module instance simulates loss of all in-memory keys at reload.
-  const reloaded = await import('../src/infrastructure/session.ts?reload');
+  const reloaded = await import('../src/modules/auth/infrastructure/saved-session.ts?reload');
   assert.deepEqual(await reloaded.decryptSession(reloaded.readSavedSession(), password), fixture);
   forgetSavedSession();
   assert.equal(hasSavedSession(), false);

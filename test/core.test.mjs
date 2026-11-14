@@ -1,10 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupByDate, filterTopics } from '../src/domain/polls.ts';
-import { parseLink } from '../src/domain/links.ts';
-import { readVoters } from '../src/infrastructure/telegram/voters.ts';
+import { groupByDate, filterTopics } from '../src/modules/polls/domain/polls.ts';
+import { parseLink } from '../src/modules/polls/application/links.ts';
+import { readVoters } from '../src/modules/polls/infrastructure/voters.ts';
 import { samplePolls } from './fixtures/polls.mjs';
-import { csv } from '../src/domain/csv.ts';
 
 test('each date lists its own voters and independent topic, time and place intersections', () => {
   const data = samplePolls();
@@ -15,8 +14,8 @@ test('each date lists its own voters and independent topic, time and place inter
   );
   assert.deepEqual(groups[0].ids, ['1', '2', '3', '4']);
   assert.deepEqual(
-    groups[0].sections.map((section) => section.label),
-    ['Topics', 'Time', 'Places'],
+    groups[0].sections.map((section) => section.kind),
+    ['topic', 'time', 'place'],
   );
   assert.deepEqual(groups[0].sections[0].options[0].ids, ['1', '2', '4']);
   assert.equal(groups[0].bestTopicCount, 3);
@@ -77,7 +76,7 @@ test('topics with equal totals prefer explicit votes and preserve poll order for
 
 test('minimum applies only to topics and hides dates with no qualifying topic without altering day totals', () => {
   const groups = groupByDate(samplePolls().polls);
-  const filtered = filterTopics(groups);
+  const filtered = filterTopics(groups, 3);
   assert.equal(filtered.length, 2);
   for (const group of filtered) {
     assert.equal(group.ids.length, 4);
@@ -96,6 +95,13 @@ test('minimum applies only to topics and hides dates with no qualifying topic wi
     filterTopics(mixed, 3).map((group) => group.date),
     ['14 November'],
   );
+});
+
+test('topic filtering enforces the numeric threshold contract without coercion or application defaults', () => {
+  const groups = groupByDate(samplePolls().polls);
+  for (const minimum of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '3', null, undefined])
+    assert.throws(() => filterTopics(groups, minimum), /Topic minimum/);
+  assert.deepEqual(filterTopics(groups, 0), groups);
 });
 
 test('date voters without votes elsewhere are counted once in every option with separate explicit and implicit totals', () => {
@@ -118,14 +124,6 @@ test('date voters without votes elsewhere are counted once in every option with 
   assert.equal(group.bestTopicCount, 4);
   assert.equal(group.bestTopicExplicitCount, 2);
   assert.equal(group.bestTopicImplicitCount, 2);
-  const exported = csv([group], { 1: 'Anna', 2: 'Alex', 3: 'Morgan', 4: 'Olivia' });
-  assert.ok(exported.includes('"Total","Explicit","Implicit"'));
-  assert.ok(exported.includes('"Date","a","4","3","1","Anna; Alex; Olivia; Morgan","Morgan"'));
-  assert.ok(
-    exported.includes(
-      '"Places","a","4","1","3","Anna; Alex; Olivia; Morgan","Alex; Olivia; Morgan"',
-    ),
-  );
 });
 
 test('abstention in any poll includes its options but never overrides an explicit different choice', () => {
@@ -236,10 +234,16 @@ test('the same missing-vote rule applies to all four polls; double abstention co
 });
 
 test('public, private and forum message links', () => {
-  assert.equal(parseLink('https://t.me/group_chat/123').peer, 'group_chat');
+  assert.deepEqual(parseLink('https://t.me/group_chat/123').peer, {
+    kind: 'username',
+    name: 'group_chat',
+  });
   assert.deepEqual(parseLink('https://t.me/c/1234567890/10/42?single').messageId, 42);
-  assert.equal(parseLink('https://t.me/c/1234567890/42').peer, -1001234567890);
-  assert.equal(parseLink('https://t.me/c/12345/42').peer, -1000000012345);
+  assert.deepEqual(parseLink('https://t.me/c/1234567890/42').peer, {
+    kind: 'channel',
+    id: 1234567890,
+  });
+  assert.deepEqual(parseLink('https://t.me/c/12345/42').peer, { kind: 'channel', id: 12345 });
   assert.equal(parseLink('https://t.me/group_chat/10/42').messageId, 42);
   for (const bad of [
     'https://evil.com/group/42',
@@ -305,10 +309,10 @@ test('pagination retains the latest vote time and distinguishes missing metadata
   }));
   const [group] = groupByDate(polls);
   assert.deepEqual(group.votesByPerson['3'], [
-    { label: 'Topic', voted: true, at: null },
-    { label: 'Date', voted: false, at: null },
-    { label: 'Time', voted: false, at: null },
-    { label: 'Place', voted: false, at: null },
+    { kind: 'topic', voted: true, at: null },
+    { kind: 'date', voted: false, at: null },
+    { kind: 'time', voted: false, at: null },
+    { kind: 'place', voted: false, at: null },
   ]);
   assert.equal(group.votesByPerson['2'][0].at, start + 60);
 });
@@ -331,49 +335,4 @@ test('rejects missing pages, repeated cursors and changing totals', async () => 
     readVoters(async () => ({ count: 1, people: [{ id: 1 }] }), 2),
     /changed/,
   );
-});
-
-test('CSV quotes untrusted labels, neutralizes spreadsheet formulas, preserves multiline values', () => {
-  const output = csv(
-    [
-      {
-        date: 'date',
-        ids: ['123'],
-        sections: [
-          {
-            label: 'Topics',
-            options: [
-              { text: '=SUM(1,2)', ids: ['123'] },
-              { text: '"18:00"', ids: ['123'] },
-              { text: 'Cafe\ncentre', ids: [] },
-            ],
-          },
-        ],
-      },
-    ],
-    { 123: '@evil' },
-  );
-  assert.ok(output.startsWith('\uFEFF'));
-  assert.ok(output.includes('"\'=SUM(1,2)"'));
-  assert.ok(output.includes('"\'@evil"'));
-  assert.ok(output.includes('"""18:00"""'));
-  assert.ok(output.includes('"Cafe\ncentre"'));
-});
-
-test('CSV exports names and counts without IDs, including when a name is missing', () => {
-  const id = 'user:987654321012';
-  const output = csv(
-    [
-      {
-        date: 'Date',
-        ids: [id],
-        sections: [{ label: 'Topics', options: [{ text: 'Topic', ids: [id], implicitIds: [id] }] }],
-      },
-    ],
-    {},
-  );
-  assert.ok(!output.includes('987654321012'));
-  assert.ok(!output.includes('user:'));
-  assert.ok(!output.includes('Telegram ID'));
-  assert.ok(output.includes('Unnamed participant'));
 });

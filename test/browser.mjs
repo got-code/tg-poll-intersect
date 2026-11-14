@@ -18,6 +18,8 @@ const fixture = await build({
     loader: 'js',
     contents: `
     import { mountTestApp } from './test/fixtures/app.mjs';
+    import { PasswordRequiredError } from './src/application/errors.ts';
+    window.requirePassword = () => window.qrTest.reject(new PasswordRequiredError());
     mountTestApp({
       createClient: (id, hash) => ({
         async getApiCredentials() { return {id, hash}; },
@@ -26,7 +28,7 @@ const fixture = await build({
         async destroy() { window.destroyed = (window.destroyed || 0) + 1; },
       }),
       auth: {
-        sendCode: async () => ({phoneCodeHash:'fake-code-hash', type:'app'}),
+        sendCode: async () => ({codeToken:'fake-code-hash', delivery:'app'}),
         signIn: async () => ({displayName:'Test'}),
         qr: (client, options) => new Promise((resolve, reject) => {
           window.qrTest = {options, resolve, reject};
@@ -51,15 +53,29 @@ const fixture = await build({
 const script = fixture.outputFiles[0].text;
 const escapedScript = script.replace(/<\/script/gi, '<\\/script');
 const hash = createHash('sha256').update(escapedScript).digest('base64');
-const styles = await readFile('src/styles.css', 'utf8');
+const styles = new Map(
+  await Promise.all(
+    [
+      'presentation/styles.css',
+      'modules/auth/presentation/styles.css',
+      'modules/polls/presentation/styles.css',
+    ].map(async (path) => [path, await readFile(`src/${path}`, 'utf8')]),
+  ),
+);
 const html = (await readFile('src/index.html', 'utf8'))
   .replace(
     /<script\b[^>]*src="\/main\.ts"[^>]*>\s*<\/script>/,
     () => `<script>${escapedScript}</script>`,
   )
-  .replace(/<link\b[^>]*href="\/styles\.css"[^>]*>/, () => `<style>${styles}</style>`)
+  .replace(/<link\b[^>]*href="\/([^" ]+\.css)"[^>]*>/g, (_match, path) => {
+    assert.ok(styles.has(path), path);
+    return `<style>${styles.get(path)}</style>`;
+  })
   .replace("script-src 'self'", `script-src 'sha256-${hash}'`);
 const buildMtime = (await stat('dist/index.html')).mtimeMs;
+const manifest = JSON.parse(await readFile('dist/.vite/manifest.json', 'utf8'));
+const authAsset = manifest['modules/auth/infrastructure/telegram.ts'].file;
+const pollAsset = manifest['modules/polls/infrastructure/telegram.ts'].file;
 const production = await preview({
   logLevel: 'error',
   preview: { port: 0 },
@@ -80,6 +96,102 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 let browser;
 const errors = [];
 let cases = 0;
+async function checkLazyTelegram() {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const requests = [];
+  const sockets = [];
+  page.on('request', (request) => requests.push(request.url()));
+  page.on('websocket', (socket) => sockets.push(socket.url()));
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    window.violations = [];
+    document.addEventListener('securitypolicyviolation', (event) =>
+      window.violations.push(event.violatedDirective),
+    );
+  });
+  const release = Promise.withResolvers();
+  await page.route(`${origin}/${authAsset}`, async (route) => {
+    await release.promise;
+    await route.continue();
+  });
+  try {
+    await page.goto(origin);
+    await page.locator('#demo').click();
+    assert.equal(await page.locator('.date-card').count(), 10);
+    assert.equal(
+      requests.some(
+        (url) => url.endsWith(authAsset) || url.endsWith(pollAsset) || url.endsWith('.wasm'),
+      ),
+      false,
+    );
+    assert.deepEqual(sockets, []);
+
+    const waiting = page.waitForRequest(`${origin}/${authAsset}`);
+    await page.locator('#connect').click();
+    await waiting;
+    assert.equal(await page.locator('#login').isVisible(), true);
+    // Submit before preloading completes, then cancel while the same load is pending.
+    await page.locator('#apiId').fill('12345');
+    await page.locator('#apiHash').fill('abcdef0123456789abcdef0123456789');
+    await page.locator('#phone').fill('+381123456789');
+    await page.locator('#loginSubmit').click();
+    assert.equal(await page.locator('#loginSubmit').isDisabled(), true);
+    await page.locator('#cancelLogin').click();
+    release.resolve();
+    await page.evaluate(
+      async (urls) => {
+        await Promise.all(urls.map((url) => import(url)));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+      [`${origin}/${authAsset}`, `${origin}/${pollAsset}`],
+    );
+    assert.equal(requests.filter((url) => url.endsWith(authAsset)).length, 1);
+    assert.equal(await page.locator('#login').isVisible(), false);
+    assert.equal(await page.locator('#disconnect').isVisible(), false);
+    assert.equal(await page.locator('#apiHash').inputValue(), '');
+    assert.equal(
+      await page.evaluate(() => localStorage.getItem('poll-intersections.session.v1')),
+      null,
+    );
+    assert.deepEqual(sockets, [], 'Cancelled loading must not connect to an account');
+    assert.deepEqual(await page.evaluate(() => window.violations), []);
+  } finally {
+    release.resolve();
+    await context.close();
+  }
+
+  const failed = await browser.newContext();
+  const retry = await failed.newPage();
+  retry.on('pageerror', (error) => errors.push(error.message));
+  retry.on('websocket', (socket) => sockets.push(socket.url()));
+  try {
+    await retry.route(`${origin}/${authAsset}`, (route) => route.abort('failed'));
+    await retry.goto(origin);
+    await retry.locator('#connect').click();
+    await retry.locator('#apiId').fill('12345');
+    await retry.locator('#apiHash').fill('abcdef0123456789abcdef0123456789');
+    await retry.locator('#phone').fill('+381123456789');
+    await retry.locator('#loginSubmit').click();
+    await retry.waitForFunction(() =>
+      document
+        .getElementById('loginStatus')
+        .textContent.includes('Could not load Telegram support'),
+    );
+    assert.equal(await retry.locator('#loginSubmit').isEnabled(), true);
+    await retry.locator('#cancelLogin').click();
+    await retry.unroute(`${origin}/${authAsset}`);
+    await retry.reload();
+    await retry.locator('#connect').click();
+    await retry.evaluate(async (url) => {
+      await import(url);
+    }, `${origin}/${authAsset}`);
+    assert.equal(await retry.locator('#login').isVisible(), true);
+    assert.deepEqual(sockets, [], 'Preloading code must not connect to an account');
+  } finally {
+    await failed.close();
+  }
+}
 async function openQr(page, remember = false) {
   await page.locator('#connect').click();
   await page.locator('#apiId').fill('12345');
@@ -207,6 +319,9 @@ async function checkRefreshCollapse(page) {
   );
   assert.equal(await page.locator('#pollLinks').evaluate((node) => node.open), false);
   assert.equal(await page.locator('#refresh').isVisible(), true);
+  const exported = await downloadCsv(page, 'poll-results.csv');
+  assert.ok(exported.includes('First; Second; Third'));
+  assert.ok(exported.includes('Synthetic option'));
   await page.evaluate(() => {
     window.pollRequestError = true;
   });
@@ -224,11 +339,28 @@ async function checkRefreshCollapse(page) {
   assert.equal(await page.locator('#pollLinks').evaluate((node) => node.open), true);
   await page.evaluate(() => localStorage.removeItem('poll-intersections.preferences.v1'));
 }
+async function downloadCsv(page, filename) {
+  const pending = page.waitForEvent('download');
+  await page.locator('#export').click();
+  const download = await pending;
+  assert.equal(download.suggestedFilename(), filename);
+  const stream = await download.createReadStream();
+  assert.ok(stream);
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  const content = Buffer.concat(chunks).toString('utf8');
+  assert.ok(content.startsWith('\uFEFF"Date","Section","Option","Total","Explicit","Implicit"'));
+  assert.ok(!content.includes('Telegram ID'));
+  return content;
+}
 async function checkDemo(page, width, timeZone) {
   await page.locator('#demo').click();
   assert.equal(await page.locator('.date-card').count(), 10);
   await page.locator('#topicMinimum').fill('0');
   assert.equal(await page.locator('.date-option').count(), 160);
+  const exported = await downloadCsv(page, 'poll-demo.csv');
+  assert.equal(exported.split('\r\n').length, 171);
+  assert.ok(exported.includes('Anna Maria Silva'));
   const card = page.locator('.date-card').first();
   const attendees = card.locator('.date-attendees');
   const anna = attendees.getByRole('button', { name: 'Anna Maria Silva', exact: true });
@@ -320,6 +452,7 @@ try {
     executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
     headless: true,
   });
+  await checkLazyTelegram();
   for (const width of [320, 390, 1280])
     for (const colorScheme of ['light', 'dark']) {
       const timeZone = colorScheme === 'light' ? 'UTC' : 'Europe/Belgrade';
@@ -391,7 +524,7 @@ try {
         ),
       );
       assert.equal(await decoded(page), 'tg://login?token=SYNTHETIC_REPLACEMENT_TOKEN');
-      await page.evaluate(() => window.qrTest.reject(new Error('SESSION_PASSWORD_NEEDED')));
+      await page.evaluate(() => window.requirePassword());
       await page.locator('#password').waitFor({ state: 'visible' });
       assert.equal(await page.locator('#qrCode').getAttribute('src'), null);
       assert.equal(await page.locator('#apiHash').inputValue(), '');
@@ -490,7 +623,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    `Browser: ${cases} viewport/theme cases passed; demo, vote tooltips, time zones, keyboard/touch/hover, QR, 2FA, encrypted reload, cancellation and CSP verified.`,
+    `Browser: ${cases} viewport/theme cases passed; lazy SDK loading, load failure recovery, cancellation, demo, CSV downloads, vote tooltips, time zones, keyboard/touch/hover, QR, 2FA, encrypted reload and CSP verified.`,
   );
 } finally {
   await browser?.close();

@@ -24,6 +24,8 @@ pnpm dev
 
 Open [127.0.0.1:3000](http://127.0.0.1:3000). Vite provides its standard development
 server, dependency cache, CSS hot updates and automatic page reloads.
+To stop the dev server cleanly, press `q` then Enter in its terminal. Press `h`
+then Enter to list Vite's terminal shortcuts.
 
 `pnpm build` creates the static site in `dist/`. `pnpm start` previews that existing
 build without rebuilding; run the build command again when you need a newer preview.
@@ -59,7 +61,7 @@ pnpm exec playwright install --with-deps chromium
 ```
 
 For an installed Chromium, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`.
-Auth RPC diagnostics appear in the console under `[Telegram`; secrets and response
-bodies are excluded.
+Auth RPC diagnostics and poll-read failures appear in the console under `[Telegram`.
+They preserve safe error codes and timing, excluding secrets, identifiers and response bodies.
 
 Read the [development rules](CONTRIBUTING.md) before making changes.

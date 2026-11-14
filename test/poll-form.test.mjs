@@ -1,7 +1,7 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPollForm } from '../src/ui/poll-form.ts';
-import * as preferences from '../src/infrastructure/preferences.ts';
+import { createPollForm } from '../src/modules/polls/presentation/form.ts';
+import * as preferences from '../src/modules/polls/infrastructure/preferences.ts';
 const { PREFERENCES_KEY } = preferences;
 
 afterEach(() => {
@@ -89,4 +89,42 @@ test('clearing opens and focuses the first field; collapsing moves focus out of 
   assert.equal(view.$('pollLinks').open, true);
   assert.equal(document.activeElement, view.$('link0'));
   assert.deepEqual(JSON.parse(view.storage.get(PREFERENCES_KEY)).links, ['', '', '', '']);
+});
+
+test('form text is parsed before applying the shared numeric preference policy', () => {
+  const view = setup();
+  for (const [text, expected] of [
+    ['', 3],
+    [' ', 3],
+    ['0', 0],
+    ['8', 8],
+    ['-1', 3],
+    ['2.5', 3],
+    ['bad', 3],
+  ]) {
+    view.$('topicMinimum').value = text;
+    assert.equal(view.form.getMinimum(), expected, text);
+    view.$('topicMinimum').handlers.change();
+    assert.equal(view.$('topicMinimum').value, String(expected));
+    assert.equal(JSON.parse(view.storage.get(PREFERENCES_KEY)).topicMinimum, expected);
+  }
+});
+
+test('the v1 storage schema accepts numeric settings and falls back for incompatible representations', () => {
+  const view = setup();
+  for (const [value, expected] of [
+    [0, 0],
+    [8, 8],
+    ['8', 3],
+    [null, 3],
+    [false, 3],
+    [-1, 3],
+    [2.5, 3],
+  ]) {
+    view.storage.set(
+      PREFERENCES_KEY,
+      JSON.stringify({ links: ['', '', '', ''], topicMinimum: value }),
+    );
+    assert.equal(preferences.readPreferences().topicMinimum, expected, String(value));
+  }
 });

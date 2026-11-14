@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTelegramDiagnostics } from '../src/infrastructure/telegram/diagnostics.ts';
+import { tl } from '@mtcute/web';
 
 test('auth diagnostics expose delivery information and omit credentials and response bodies', async () => {
   const entries = [];
@@ -114,4 +115,26 @@ test('QR diagnostics log token constructors and known errors, never the tokens o
   }
   assert.ok(!JSON.stringify(entries).includes('SECRET'));
   assert.ok(!JSON.stringify(entries).includes('987654'));
+});
+
+test('poll-read failures retain method and safe server details without logging poll data', async () => {
+  const entries = [];
+  const trace = createTelegramDiagnostics((...args) => entries.push(args));
+  const raw = tl.RpcError.fromTl({ errorCode: 420, errorMessage: 'FLOOD_WAIT_120' });
+  raw.message = 'SECRET_RESPONSE';
+  await assert.rejects(
+    trace({ _: 'messages.getPollVotes', peer: 'SECRET_CHAT', id: 987654321 }, async () => {
+      throw raw;
+    }),
+    (error) => error === raw,
+  );
+  assert.equal(entries.length, 1);
+  assert.ok(entries[0][0].includes('messages.getPollVotes'));
+  const details = JSON.parse(entries[0][1]);
+  assert.equal(details.error, 'FLOOD_WAIT_120');
+  assert.equal(details.code, 420);
+  assert.equal(details.retryAfterSeconds, 120);
+  assert.ok(Number.isInteger(details.elapsedMs));
+  assert.ok(!JSON.stringify(entries).includes('SECRET'));
+  assert.ok(!JSON.stringify(entries).includes('987654321'));
 });

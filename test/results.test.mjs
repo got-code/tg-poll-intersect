@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupByDate, filterTopics } from '../src/domain/polls.ts';
+import { groupByDate, filterTopics } from '../src/modules/polls/domain/polls.ts';
 import { samplePolls } from './fixtures/polls.mjs';
-import { createResultsRenderer } from '../src/ui/results.ts';
+import { createResultsRenderer } from '../src/modules/polls/presentation/results.ts';
 
 class Element {
   constructor(tag) {

@@ -1,0 +1,66 @@
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 24px;
+  width: min(440px, calc(100% - 32px));
+  background: var(--white);
+  color: var(--ink);
+  box-shadow: 0 20px 100px #0004;
+}
+dialog::backdrop {
+  background: #10201999;
+  backdrop-filter: blur(3px);
+}
+dialog h2 {
+  font-size: 1.3rem;
+}
+dialog label {
+  display: block;
+  margin-top: 16px;
+}
+dialog label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  font-size: 0.83rem;
+}
+dialog label.check input {
+  width: auto;
+  min-width: 18px;
+  min-height: 18px;
+  margin: 0;
+  accent-color: var(--green);
+}
+dialog .actions {
+  margin-top: 20px;
+}
+dialog .muted {
+  font-size: 0.85rem;
+}
+.login-methods {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+.login-methods button {
+  flex: 1;
+}
+.login-methods button[aria-pressed='true'] {
+  border-color: var(--green);
+  background: var(--soft);
+}
+.login-qr {
+  display: block;
+  width: 240px;
+  max-width: 100%;
+  height: auto;
+  margin: 20px auto 16px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+@media (max-width: 650px) {
+  dialog {
+    padding: 20px;
+  }
+}

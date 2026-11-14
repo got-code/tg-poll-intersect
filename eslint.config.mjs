@@ -14,6 +14,42 @@ export default defineConfig(
     rules: { '@typescript-eslint/consistent-type-imports': 'error' },
   },
   {
+    files: [
+      'src/domain/**/*.ts',
+      'src/application/**/*.ts',
+      'src/modules/*/domain/**/*.ts',
+      'src/modules/*/application/**/*.ts',
+    ],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          globals: [
+            'window',
+            'document',
+            'localStorage',
+            'sessionStorage',
+            'indexedDB',
+            'navigator',
+            'fetch',
+            'WebSocket',
+            'Worker',
+            'crypto',
+            'Blob',
+            'File',
+            'FileReader',
+            'HTMLElement',
+            'console',
+            'process',
+            'Buffer',
+          ],
+          checkGlobalObject: true,
+          globalObjects: ['global'],
+        },
+      ],
+    },
+  },
+  {
     files: ['test/**/*.mjs', 'eslint.config.mjs'],
     extends: [js.configs.recommended],
     languageOptions: { globals: { ...globals.node, ...globals.browser } },

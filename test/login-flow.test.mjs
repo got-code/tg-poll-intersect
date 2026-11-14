@@ -4,11 +4,12 @@ import { webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { build } from 'esbuild';
-import { decryptSession, SESSION_KEY } from '../src/infrastructure/session.ts';
-import { PREFERENCES_KEY } from '../src/infrastructure/preferences.ts';
-import { demo } from '../src/demo.ts';
+import { decryptSession, SESSION_KEY } from '../src/modules/auth/infrastructure/saved-session.ts';
+import { PREFERENCES_KEY } from '../src/modules/polls/infrastructure/preferences.ts';
+import { demo } from '../src/modules/polls/infrastructure/demo.ts';
 
 globalThis.crypto ??= webcrypto;
+const tick = () => new Promise((resolve) => setImmediate(resolve));
 // Exercise the real app and encryption with a tiny DOM substitute and a fake
 // Telegram transport. These tests do not launch a browser or contact an account.
 const compiled = await build({
@@ -21,10 +22,12 @@ const compiled = await build({
     loader: 'js',
     contents: `
     import { mountTestApp } from './test/fixtures/app.mjs';
+    import { PasswordRequiredError } from './src/application/errors.ts';
+    hooks.passwordRequired = () => new PasswordRequiredError();
     mountTestApp({
       createClient: (...args) => hooks.createClient(...args),
       auth: {
-        sendCode: async () => ({phoneCodeHash:'fake-code-hash', type:'app'}),
+        sendCode: async () => ({codeToken:'fake-code-hash', delivery:'app'}),
         signIn: async () => ({displayName:'Test'}),
         qr: (...args) => hooks.qr(...args),
         password: (...args) => hooks.password(...args),
@@ -260,6 +263,7 @@ test('QR login needs API keys but no phone, refreshes the image, then uses encry
   assert.match(view.$('loginStatus').textContent, /API/);
   view.$('apiHash').value = 'abcdef0123456789abcdef0123456789';
   const signingIn = view.$('loginForm').emit('submit');
+  await tick();
   const attempt = view.hooks.qrAttempts[0];
   assert.equal(view.$('loginSubmit').hidden, true);
   attempt.callbacks.onUrlUpdated(
@@ -309,7 +313,8 @@ test('QR 2FA uses the same pending client and allows retrying an incorrect passw
   const view = app();
   await view.prepareLogin('qr');
   const signingIn = view.$('loginForm').emit('submit');
-  view.hooks.qrAttempts[0].reject(new Error('SESSION_PASSWORD_NEEDED'));
+  await tick();
+  view.hooks.qrAttempts[0].reject(view.hooks.passwordRequired());
   await signingIn;
   assert.equal(view.$('passwordLabel').hidden, false);
   assert.equal(view.$('qrFields').hidden, true);
@@ -332,6 +337,7 @@ test('switching from QR to phone or closing aborts the attempt and ignores late 
     const view = app(new Map(), { ignoreQrAbort: true });
     await view.prepareLogin('qr');
     const signingIn = view.$('loginForm').emit('submit');
+    await tick();
     const attempt = view.hooks.qrAttempts[0];
     attempt.callbacks.onUrlUpdated('tg://login?token=OLD', new Date(Date.now() + 30000));
     await view.$(action).emit('click');
@@ -364,6 +370,7 @@ test('QR network failure clears the code and allows a fresh attempt', async () =
   const view = app();
   await view.prepareLogin('qr');
   const signingIn = view.$('loginForm').emit('submit');
+  await tick();
   const attempt = view.hooks.qrAttempts[0];
   attempt.callbacks.onUrlUpdated('tg://login?token=OLD', new Date(Date.now() + 30000));
   attempt.reject(new Error('Network failed'));
@@ -374,6 +381,7 @@ test('QR network failure clears the code and allows a fresh attempt', async () =
   assert.equal(view.$('loginSubmit').disabled, false);
   assert.equal(view.hooks.destroyed, 1);
   const retry = view.$('loginForm').emit('submit');
+  await tick();
   assert.equal(view.hooks.qrAttempts.length, 2);
   await view.$('cancelLogin').emit('click');
   await retry;

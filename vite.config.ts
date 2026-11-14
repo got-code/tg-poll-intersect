@@ -8,6 +8,7 @@ export default defineConfig({
     outDir: resolve(import.meta.dirname, 'dist'),
     emptyOutDir: true,
     target: ['chrome100', 'firefox100'],
+    manifest: true,
     license: { fileName: 'THIRD-PARTY-LICENSES.txt' },
   },
   server: { host: '127.0.0.1', port: 3000, strictPort: true },

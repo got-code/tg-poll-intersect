@@ -1,0 +1,323 @@
+.panel {
+  border: 1px solid var(--line);
+  background: var(--white);
+  border-radius: 12px;
+  padding: 16px;
+}
+.paneltop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+#pollLinks > summary {
+  cursor: pointer;
+  list-style: none;
+  min-height: 44px;
+}
+#pollLinks > summary::-webkit-details-marker {
+  display: none;
+}
+#pollLinks > summary h2 {
+  margin: 0;
+}
+#pollLinks:not([open]) > summary {
+  margin-bottom: 0;
+}
+.links-toggle {
+  color: var(--green);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.links-arrow {
+  display: inline-block;
+}
+#pollLinks[open] .links-arrow {
+  transform: rotate(180deg);
+}
+#pollLinks[open] .links-edit,
+#pollLinks:not([open]) .links-hide {
+  display: none;
+}
+#clearLinks {
+  margin-top: 10px;
+}
+.links {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 18px;
+}
+.num {
+  color: var(--green);
+  font-size: 0.72rem;
+  margin-right: 8px;
+}
+.field-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.actions .hint {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.75rem;
+  max-width: 265px;
+}
+.results {
+  margin: 20px 0 16px;
+}
+.resulthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.resulthead h2 {
+  margin-bottom: 3px;
+}
+.topic-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  margin: 0 0 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+.topic-filter input {
+  width: 65px;
+  min-height: 36px;
+  margin: 0;
+  padding: 6px 8px;
+}
+.empty {
+  border: 1px dashed var(--empty-line);
+  border-radius: 12px;
+  padding: 20px 16px;
+  text-align: center;
+}
+.empty p {
+  margin: 5px auto;
+  max-width: 460px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+.empty strong {
+  font-weight: 600;
+}
+.date-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  margin-bottom: 12px;
+  padding: 12px;
+}
+.date-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 6px;
+}
+.date-heading h3 {
+  font-size: 1.05rem;
+  line-height: 1.3;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.date-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.date-count,
+.best-topic-count {
+  color: var(--green);
+  font-size: 0.83rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.date-attendees {
+  margin-bottom: 8px;
+}
+.date-section {
+  margin-top: 10px;
+}
+.date-section h4 {
+  margin: 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 650;
+}
+.date-option {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) auto minmax(0, 2fr);
+  align-items: start;
+  gap: 6px 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.date-option:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.option-name {
+  font-size: 0.83rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.option-count {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--green);
+  font-weight: 650;
+  text-align: right;
+  white-space: nowrap;
+}
+button.option-count,
+button.best-topic-count,
+button.date-count {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+button.option-count:hover,
+button.best-topic-count:hover,
+button.date-count:hover {
+  background: var(--soft);
+}
+.people-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 5px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.people-list li {
+  min-width: 0;
+  max-width: 100%;
+}
+button.person {
+  display: block;
+  min-height: 0;
+  max-width: 100%;
+  padding: 2px 6px;
+  font-weight: 400;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  background: var(--soft);
+  border: 0;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+button.person:hover {
+  outline: 1px solid var(--green);
+  outline-offset: 0;
+}
+button.person.implicit {
+  background: transparent;
+  border: 1px dashed var(--muted);
+  padding: 1px 5px;
+  font-style: italic;
+}
+.vote-legend {
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: -4px 0 10px;
+}
+.no-people {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.person-tooltip {
+  position: fixed;
+  z-index: 100;
+  max-width: min(420px, calc(100vw - 16px));
+  padding: 7px 10px;
+  background: var(--white);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  border-radius: 6px;
+  box-shadow: 0 3px 12px #0004;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.resultsfooter {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 8px 0;
+}
+.demoLabel {
+  color: var(--demo-ink);
+  background: var(--demo-bg);
+  border: 1px solid var(--demo-line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  display: inline-block;
+  margin-bottom: 8px;
+  font-size: 0.75rem;
+}
+.notice {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 14px 0;
+}
+@media (max-width: 650px) {
+  .panel {
+    padding: 12px;
+  }
+  .links {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .actions .hint {
+    margin-left: 0;
+    width: 100%;
+    max-width: none;
+    margin-top: 3px;
+  }
+  .resulthead {
+    align-items: start;
+  }
+  .resulthead h2 {
+    font-size: 1.1rem;
+  }
+  .resulthead button {
+    padding: 8px 10px;
+    font-size: 0.8rem;
+  }
+  .date-card {
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  .date-option {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+    padding: 6px 0;
+  }
+  .date-option .people-list,
+  .date-option .no-people {
+    grid-column: 1 / -1;
+  }
+}

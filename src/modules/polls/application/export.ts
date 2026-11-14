@@ -35,7 +35,7 @@ export function exportResults(
   settings: ViewSettings,
 ): ExportData {
   if (!matchesSourceLinks(result, identities))
-    throw new UserFacingError('Links changed. Refresh the results.');
+    throw new UserFacingError('Links changed. Load the polls again.');
   const groups = selectResultGroups(result, settings);
   if (!groups.length) throw new UserFacingError('No results match the participant minimum.');
   const name = (id: string) => result.names[id] || 'Unnamed participant';

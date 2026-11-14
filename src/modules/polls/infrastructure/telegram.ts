@@ -115,7 +115,7 @@ export function fetchPolls(
     for (const check of checks) {
       const [message] = await getMessages(client, check.peer, check.messageId);
       if (message?.media?.type !== 'poll' || fingerprint(message.media) !== check.fingerprint) {
-        throw new UserFacingError('A poll changed while loading. Refresh the results again.');
+        throw new UserFacingError('A poll changed while loading. Load the polls again.');
       }
     }
     return { polls, names };

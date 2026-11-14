@@ -18,7 +18,11 @@ export function createPollForm({
   links: readonly string[];
   onLinksChange: () => void;
 }) {
-  const details = $('pollLinks');
+  const settings = $('pollLinks');
+  const toggle = $('pollLinksToggle');
+  const load = $('refresh');
+  const loadActions = $('pollLoadActions');
+  const actions = $('pollActions');
   const clear = $('clearLinks');
   const add = $('addPoll');
   let rows: {
@@ -39,12 +43,22 @@ export function createPollForm({
     }
   };
 
+  function setExpanded(expanded: boolean) {
+    if (!expanded && settings.contains(document.activeElement)) toggle.focus();
+    const target = expanded ? loadActions : actions;
+    if (load.parentElement !== target) target.prepend(load);
+    settings.hidden = !expanded;
+    toggle.setAttribute('aria-expanded', String(expanded));
+  }
+
+  toggle.addEventListener('click', () => setExpanded(Boolean(settings.hidden)));
+
   function readLinks(revealError = true) {
     try {
       return readPollLinks(values());
     } catch (error) {
       if (revealError) {
-        details.open = true;
+        setExpanded(true);
         if (error instanceof PollLinkError) rows[error.index].input.focus();
       }
       if (error instanceof PollLinkError)
@@ -134,7 +148,7 @@ export function createPollForm({
       });
       input.addEventListener('input', changed);
       input.addEventListener('invalid', () => {
-        details.open = true;
+        setExpanded(true);
       });
       row.append(label, remove);
       $('pollLinkFields').append(row);
@@ -149,7 +163,7 @@ export function createPollForm({
     add.focus({ preventScroll: true });
   });
   clear.addEventListener('click', () => {
-    details.open = true;
+    setExpanded(true);
     rows.forEach((row) => {
       row.input.value = '';
     });
@@ -157,7 +171,7 @@ export function createPollForm({
     rows[0].input.focus();
   });
   renderFields(links);
-  details.open = !updateSuggestions();
+  setExpanded(!updateSuggestions());
 
   return {
     values,
@@ -167,10 +181,6 @@ export function createPollForm({
       const titles = pollLabels(polls);
       labels = new Map(polls.map((poll, index) => [poll.id, titles[index]]));
       updateSuggestions();
-    },
-    collapse() {
-      if (details.contains(document.activeElement)) $('pollLinksToggle').focus();
-      details.open = false;
     },
     setDisabled(value: boolean) {
       disabled = value;

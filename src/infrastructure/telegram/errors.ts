@@ -17,7 +17,7 @@ import { isRecord } from '../validation.ts';
 import type { ServiceFailure } from '../../application/errors.ts';
 
 const RPC_MESSAGES: Record<string, string> = {
-  POLL_VOTE_REQUIRED: 'Vote in each poll in Telegram first, then refresh the results.',
+  POLL_VOTE_REQUIRED: 'Vote in each poll in Telegram first, then load the polls again.',
   BROADCAST_FORBIDDEN: 'Telegram does not expose voter lists in channels. Use polls in a group.',
   API_ID_INVALID: 'Check your API ID and API hash from my.telegram.org/apps.',
   API_ID_PUBLISHED_FLOOD: 'Telegram rejected these API keys. Use your own application’s keys.',

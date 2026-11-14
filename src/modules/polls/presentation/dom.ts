@@ -1,8 +1,11 @@
 import { elements } from '../../../presentation/dom.ts';
 
-type ButtonId = 'refresh' | 'demo' | 'demoExample' | 'export' | 'clearLinks' | 'addPoll';
+type ButtonId =
+  'refresh' | 'demo' | 'demoExample' | 'export' | 'clearLinks' | 'addPoll' | 'pollLinksToggle';
 type TextId =
-  | 'pollLinksToggle'
+  | 'pollLinks'
+  | 'pollLoadActions'
+  | 'pollActions'
   | 'pollLinksCount'
   | 'pollLinkFields'
   | 'preferencesHint'
@@ -18,7 +21,5 @@ type PollElements = Record<ButtonId, HTMLButtonElement> &
     groupBy: HTMLSelectElement;
     filterBy: HTMLSelectElement;
     pollForm: HTMLFormElement;
-    pollLinks: HTMLDetailsElement;
-    viewHelp: HTMLDetailsElement;
   };
 export const $ = elements<PollElements>();

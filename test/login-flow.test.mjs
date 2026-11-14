@@ -63,6 +63,14 @@ class Node {
   append(...items) {
     this.children.push(...items);
   }
+  prepend(...items) {
+    for (const item of items) {
+      if (item.parentElement)
+        item.parentElement.children = item.parentElement.children.filter((child) => child !== item);
+      item.parentElement = this;
+    }
+    this.children.unshift(...items);
+  }
   replaceChildren(...items) {
     this.children = items;
   }
@@ -99,6 +107,8 @@ function app(values = new Map(), options = {}) {
     node.hidden = /\bhidden\b/.test(match[2]);
     node.disabled = /\bdisabled\b/.test(match[2]);
     node.value = match[2].match(/\bvalue="([^"]*)"/)?.[1] ?? '';
+    for (const [, name, value] of match[2].matchAll(/\b(aria-[\w-]+)="([^"]*)"/g))
+      node.setAttribute(name, value);
     nodes.set(match[3], node);
   }
   const hooks = {
@@ -400,6 +410,13 @@ test('demo filters rerender without Telegram and never persist temporary view se
   await view.$('demo').emit('click');
   assert.equal(view.$('rows').children.length, 10);
   assert.equal(view.$('export').disabled, false);
+  assert.equal(view.$('resultMeta').hidden, true);
+  assert.equal(view.$('demoLabel').hidden, false);
+  assert.equal(view.$('status').textContent, '');
+  assert.equal(
+    view.$('preferencesHint').textContent,
+    'Links and view settings are saved in this browser.',
+  );
   view.$('minimumParticipants').value = '11';
   await view.$('minimumParticipants').emit('input');
   assert.equal(view.$('rows').children.length, 0);
@@ -414,13 +431,21 @@ test('demo filters rerender without Telegram and never persist temporary view se
   assert.equal(app(view.values).$('minimumParticipants').value, '3');
 });
 
-test('help defaults depend only on saved links and remain manual during loading and demo', async () => {
+test('settings start expanded for incomplete links and keep manual state during loading and demo', async () => {
   const blank = app();
-  assert.equal(blank.$('viewHelp').open, true);
-  blank.$('viewHelp').open = false;
-  await blank.$('viewHelp').emit('toggle');
+  const load = blank.$('refresh');
+  assert.equal(blank.$('pollLinks').hidden, false);
+  assert.equal(load.parentElement, blank.$('pollLoadActions'));
+  assert.equal(blank.$('pollLinksToggle').attributes['aria-expanded'], 'true');
+  assert.equal(blank.$('viewHelp').tag, 'section');
+  await blank.$('pollLinksToggle').emit('click');
+  assert.equal(blank.$('pollLinks').hidden, true);
+  assert.equal(blank.$('refresh'), load);
+  assert.equal(load.parentElement, blank.$('pollActions'));
+  assert.equal(blank.$('pollLoadActions').children.includes(load), false);
+  assert.equal(blank.$('pollLinksToggle').attributes['aria-expanded'], 'false');
   assert.equal(blank.values.has(PREFERENCES_KEY), false);
-  assert.equal(app(blank.values).$('viewHelp').open, true);
+  assert.equal(app(blank.values).$('pollLinks').hidden, false);
 
   const view = app(new Map(), {
     pollData: {
@@ -430,29 +455,32 @@ test('help defaults depend only on saved links and remain manual during loading 
   });
   view.$('link0').value = 'https://t.me/groupchat/123';
   await view.$('link0').emit('input');
-  assert.equal(view.$('viewHelp').open, true);
+  assert.equal(view.$('pollLinks').hidden, false);
   await view.login(false);
   await view.$('pollForm').emit('submit');
-  assert.equal(view.$('viewHelp').open, true);
+  assert.equal(view.$('pollLinks').hidden, false);
+  assert.equal(view.$('refresh').textContent, 'Load polls');
+  assert.equal(view.$('refresh').disabled, false);
   const stored = view.values.get(PREFERENCES_KEY);
 
-  view.$('viewHelp').open = false;
-  await view.$('viewHelp').emit('toggle');
-  assert.equal(view.$('groupBy').attributes['aria-describedby'], undefined);
-  assert.equal(view.$('filterBy').attributes['aria-describedby'], undefined);
-  view.$('viewHelp').open = true;
-  await view.$('viewHelp').emit('toggle');
+  await view.$('pollLinksToggle').emit('click');
+  assert.equal(view.$('refresh').parentElement, view.$('pollActions'));
+  assert.equal(view.$('pollLinks').hidden, true);
+  await view.$('pollLinksToggle').emit('click');
+  assert.equal(view.$('refresh').parentElement, view.$('pollLoadActions'));
   assert.equal(view.$('groupBy').attributes['aria-describedby'], 'groupByHint');
   assert.equal(view.$('filterBy').attributes['aria-describedby'], 'filterByHint');
   await view.$('demoExample').emit('click');
-  assert.equal(view.$('viewHelp').open, true);
+  assert.equal(view.$('pollLinks').hidden, false);
   assert.equal(view.$('groupBy').value, 'demo:2');
   assert.equal(view.$('filterBy').value, 'poll:demo:1');
   assert.equal(view.$('minimumParticipants').value, '3');
   assert.equal(view.values.get(PREFERENCES_KEY), stored);
-  assert.equal(app(view.values).$('viewHelp').open, false);
+  assert.equal(app(view.values).$('pollLinks').hidden, true);
   const emptyLinks = new Map([[PREFERENCES_KEY, JSON.stringify({ links: ['', '', ''] })]]);
-  assert.equal(app(emptyLinks).$('viewHelp').open, true);
+  assert.equal(app(emptyLinks).$('pollLinks').hidden, false);
+  const invalidLinks = new Map([[PREFERENCES_KEY, JSON.stringify({ links: ['invalid'] })]]);
+  assert.equal(app(invalidLinks).$('pollLinks').hidden, false);
 });
 
 test('demo presets and edits stay separate from live settings through source edits, reload, failure and return', async () => {
@@ -480,8 +508,13 @@ test('demo presets and edits stay separate from live settings through source edi
   await view.$('minimumParticipants').emit('input');
   const live = JSON.parse(view.values.get(PREFERENCES_KEY));
   const stored = view.values.get(PREFERENCES_KEY);
+  const preferencesHint = view.$('preferencesHint').textContent;
+  assert.equal(view.$('resultMeta').hidden, false);
 
   await view.$('demo').emit('click');
+  assert.equal(view.$('resultMeta').hidden, true);
+  assert.equal(view.$('status').textContent, '');
+  assert.equal(view.$('preferencesHint').textContent, preferencesHint);
   assert.equal(view.$('groupBy').value, 'demo:2');
   assert.equal(view.$('filterBy').value, 'poll:demo:1');
   assert.equal(view.$('minimumParticipants').value, '3');
@@ -520,11 +553,15 @@ test('demo presets and edits stay separate from live settings through source edi
   assert.equal(view.$('filterBy').value, `poll:${live.filterBy.pollId}`);
   assert.equal(view.$('minimumParticipants').value, String(live.minimumParticipants));
   assert.equal(view.$('demoLabel').hidden, true);
+  assert.equal(view.$('resultMeta').hidden, false);
+  assert.equal(view.$('preferencesHint').textContent, preferencesHint);
   assert.equal(view.$('resultHeading').textContent, 'By “Live poll 3”');
   assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)), edited);
 
   await view.$('demo').emit('click');
   await view.$('disconnect').emit('click');
+  assert.equal(view.$('resultMeta').hidden, false);
+  assert.equal(view.$('demoLabel').hidden, true);
   assert.equal(view.$('minimumParticipants').value, '4');
   assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)), edited);
 });
@@ -540,7 +577,7 @@ test('added rows submit inferred polls, persists only manual input, and detects 
   const reloaded = app(view.values);
   assert.equal(reloaded.$('link3').value, '');
   assert.equal(reloaded.$('link3').placeholder, 'https://t.me/groupchat/126');
-  assert.equal(reloaded.$('pollLinks').open, false);
+  assert.equal(reloaded.$('pollLinks').hidden, true);
   await view.login(false);
   await view.$('pollForm').emit('submit');
   assert.deepEqual(
@@ -548,7 +585,7 @@ test('added rows submit inferred polls, persists only manual input, and detects 
     [123, 124, 125, 126],
   );
   assert.equal(view.$('export').disabled, false);
-  assert.equal(view.$('pollLinks').open, false);
+  assert.equal(view.$('pollLinks').hidden, false);
   // A manual value equal to the automatic one still identifies the same polls.
   view.$('link1').value = 'https://telegram.me/GroupChat/124?single';
   await view.$('link1').emit('input');
@@ -561,25 +598,26 @@ test('added rows submit inferred polls, persists only manual input, and detects 
   await view.$('clearLinks').emit('click');
   assert.deepEqual(JSON.parse(view.values.get(PREFERENCES_KEY)).links, ['', '', '', '']);
   assert.equal(view.$('clearLinks').hidden, true);
-  assert.equal(view.$('pollLinks').open, true);
+  assert.equal(view.$('pollLinks').hidden, false);
   assert.equal(app(view.values).$('link0').value, '');
 });
 
-test('failed refreshes preserve the disclosure state; only a successful refresh collapses it', async () => {
+test('successful and failed refreshes both preserve the manual settings disclosure state', async () => {
   const options = { pollData: demo() };
   const view = app(new Map(), options);
   for (let i = 1; i < 4; i++) await view.$('addPoll').emit('click');
   view.$('link0').value = 'https://t.me/groupchat/123';
   await view.$('link0').emit('input');
   await view.login(false);
-  await view.$('pollForm').emit('submit');
-  assert.equal(view.$('pollLinks').open, false);
-  delete options.pollData;
-  for (const open of [true, false]) {
-    view.$('pollLinks').open = open;
+  for (const hidden of [false, true]) {
+    if (view.$('pollLinks').hidden !== hidden) await view.$('pollLinksToggle').emit('click');
     await view.$('pollForm').emit('submit');
-    assert.equal(view.$('pollLinks').open, open);
+    assert.equal(view.$('pollLinks').hidden, hidden);
+    delete options.pollData;
+    await view.$('pollForm').emit('submit');
+    assert.equal(view.$('pollLinks').hidden, hidden);
     assert.match(view.$('status').textContent, /Unexpected poll request/);
+    options.pollData = demo();
   }
 });
 
@@ -608,6 +646,9 @@ test('corrupt preferences and denied storage do not prevent use', async () => {
   await denied.$('addPoll').emit('click');
   assert.equal(denied.$('link1').placeholder, 'https://t.me/groupchat/124');
   assert.match(denied.$('preferencesHint').textContent, /storage is unavailable/);
+  const preferencesHint = denied.$('preferencesHint').textContent;
+  await denied.$('demo').emit('click');
+  assert.equal(denied.$('preferencesHint').textContent, preferencesHint);
 });
 
 test('login remains memory-only when saving is declined or storage fails', async () => {

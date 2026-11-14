@@ -32,19 +32,6 @@ export function createPollController({
 }: PollDependencies) {
   const renderGroups = createResultsRenderer($('rows'));
   const saved = preferences.readPreferences();
-  const help = $('viewHelp');
-  help.open = !saved.links.some((link) => link.trim());
-  function updateHelpDescriptions() {
-    for (const [id, hint] of [
-      ['groupBy', 'groupByHint'],
-      ['filterBy', 'filterByHint'],
-    ] as const) {
-      if (help.open) $(id).setAttribute('aria-describedby', hint);
-      else $(id).removeAttribute('aria-describedby');
-    }
-  }
-  help.addEventListener('toggle', updateHelpDescriptions);
-  updateHelpDescriptions();
   let busy = false;
   let result: PollResult | null = null;
   let visible: PollGroup[] = [];
@@ -77,18 +64,18 @@ export function createPollController({
 
   function updatePreferencesHint() {
     $('preferencesHint').textContent = preferencesAvailable
-      ? result?.kind === 'demo'
-        ? 'Demo view settings are temporary. Your own settings are kept.'
-        : 'Links and view settings are saved in this browser.'
+      ? 'Links and view settings are saved in this browser.'
       : 'Browser storage is unavailable. These settings will not survive a reload.';
   }
 
   function updateResultMeta() {
-    if (result) {
-      $('resultMeta').textContent =
-        result.kind === 'live' && !linksMatch()
-          ? 'Links changed. Refresh the results.'
-          : `${visible.length} ${visible.length === 1 ? 'group' : 'groups'} · ${result.polls.length} ${result.polls.length === 1 ? 'poll' : 'polls'}${result.kind === 'live' ? ` · loaded at ${loadedTime(result)}` : ''}`;
+    const demo = result?.kind === 'demo';
+    $('resultMeta').hidden = demo;
+    $('demoLabel').hidden = !demo;
+    if (result?.kind === 'live') {
+      $('resultMeta').textContent = !linksMatch()
+        ? 'Links changed. Load polls again.'
+        : `${visible.length} ${visible.length === 1 ? 'group' : 'groups'} · ${result.polls.length} ${result.polls.length === 1 ? 'poll' : 'polls'} · loaded at ${loadedTime(result)}`;
     }
     $('export').disabled = exportDisabled();
   }
@@ -109,7 +96,6 @@ export function createPollController({
       );
     }
     $('resultFooter').hidden = !visible.length;
-    $('demoLabel').hidden = result.kind !== 'demo';
     updateResultMeta();
   }
 
@@ -131,7 +117,7 @@ export function createPollController({
     });
     onBusyChange(value);
     form.setDisabled(value);
-    $('refresh').textContent = value ? 'Loading…' : 'Refresh results ↗';
+    $('refresh').textContent = value ? 'Loading…' : 'Load polls';
     $('export').disabled = exportDisabled();
   }
 
@@ -150,7 +136,7 @@ export function createPollController({
     }
     setBusy(true);
     if (result?.kind === 'live')
-      $('resultMeta').textContent = `Refreshing… Previous results: ${loadedTime(result)}`;
+      $('resultMeta').textContent = `Loading… Previous results: ${loadedTime(result)}`;
     try {
       showData(
         await results.load(links, (event) =>
@@ -162,15 +148,13 @@ export function createPollController({
         ),
         liveSettings,
       );
-      form.collapse();
       status(
         `Done. ${result!.polls.length} ${result!.polls.length === 1 ? 'poll' : 'polls'} loaded.`,
       );
     } catch (error) {
       status(explainError(error), true);
       if (result?.kind === 'live')
-        $('resultMeta').textContent =
-          `Refresh failed · previous results from ${loadedTime(result)}`;
+        $('resultMeta').textContent = `Load failed · previous results from ${loadedTime(result)}`;
     } finally {
       setBusy(false);
     }
@@ -184,9 +168,7 @@ export function createPollController({
   function showDemo() {
     const demo = results.demo();
     showData(demo, demo.viewSettings);
-    status(
-      'The demo does not connect to Telegram. Add your poll links and refresh to load your results.',
-    );
+    status('');
   }
   $('demo').addEventListener('click', showDemo);
   $('demoExample').addEventListener('click', showDemo);
@@ -227,9 +209,8 @@ export function createPollController({
         ),
       );
       $('empty').hidden = false;
-      $('demoLabel').hidden = true;
       $('resultFooter').hidden = true;
-      $('export').disabled = true;
+      updateResultMeta();
     },
   };
 }

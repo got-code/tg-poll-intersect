@@ -31,34 +31,119 @@
         </div>
       </header>
       <main>
-        <section class="panel" aria-labelledby="pollHeading">
-          <form id="pollForm">
-            <details id="pollLinks" open>
-              <summary id="pollLinksToggle" class="paneltop">
-                <h2 id="pollHeading">
-                  Poll links<span id="pollLinksCount" class="muted small"></span>
-                </h2>
-                <span class="links-toggle" aria-hidden="true"
-                  ><span class="links-edit">Edit</span><span class="links-hide">Hide</span>
-                  <span class="links-arrow">▾</span></span
-                >
-              </summary>
+        <section class="panel" aria-label="Poll settings">
+          <div id="pollLinks">
+            <form id="pollForm">
+              <h2 id="pollHeading">
+                Poll links<span id="pollLinksCount" class="muted small"></span>
+              </h2>
               <div class="link-actions">
                 <button id="addPoll" type="button">Add poll</button>
                 <button id="clearLinks" type="button" class="text" hidden>Clear links</button>
               </div>
               <div id="pollLinkFields" class="links"></div>
-            </details>
-            <div class="actions">
-              <button class="primary" id="refresh" type="submit">
-                Refresh results <span aria-hidden="true">↗</span></button
-              ><button id="demo" type="button">Demo</button
-              ><span class="hint" id="preferencesHint"
-                >Links and view settings are saved in this browser.</span
-              >
-            </div>
-          </form>
-          <p id="status" class="status" role="status" aria-live="polite"></p>
+              <div id="pollLoadActions" class="actions">
+                <button class="primary" id="refresh" type="submit" form="pollForm">
+                  Load polls
+                </button>
+                <button id="demo" type="button">Demo</button>
+              </div>
+            </form>
+            <section class="view-settings" aria-labelledby="viewSettingsHeading">
+              <h2 id="viewSettingsHeading">Grouping and filtering</h2>
+              <div class="view-controls" role="group" aria-label="Result settings">
+                <div>
+                  <label for="groupBy">Group by</label>
+                  <select id="groupBy" aria-describedby="groupByHint" disabled></select>
+                </div>
+                <div>
+                  <label for="filterBy">Filter by</label>
+                  <select id="filterBy" aria-describedby="filterByHint" disabled></select>
+                </div>
+                <div class="minimum-filter">
+                  <label for="minimumParticipants">Minimum participants</label>
+                  <input
+                    id="minimumParticipants"
+                    aria-describedby="minimumParticipantsHint"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value="3"
+                    inputmode="numeric"
+                    disabled
+                  />
+                  <span id="minimumParticipantsHint" class="field-hint">
+                    Counts explicit + implicit participants.
+                  </span>
+                </div>
+              </div>
+              <section id="viewHelp" class="view-help" aria-labelledby="viewHelpHeading">
+                <h3 id="viewHelpHeading">How grouping and filtering work</h3>
+                <div class="view-help-content">
+                  <p id="groupByHint">
+                    <strong>Group by</strong> — Each option in the poll selected under “Group by”
+                    gets its own card. Inside, see the participants and their choices in the other
+                    polls.
+                  </p>
+                  <p id="filterByHint">
+                    <strong>Filter by</strong> — Inside each card, count people for each option in
+                    the poll selected under “Filter by”. Hide options below the minimum, and hide
+                    the card if no option reaches it.
+                  </p>
+                  <div id="filterExample" class="help-example">
+                    <p class="example-heading">
+                      <strong>For example —</strong>
+                      <button id="demoExample" type="button">Try the demo</button>
+                    </p>
+                    <p>
+                      Set <strong>Group by</strong> to “Which date?” and
+                      <strong>Filter by</strong> to “What shall we discuss?”, with a minimum of
+                      <strong>3</strong> people. In the <strong>“16 November”</strong> card:
+                    </p>
+                    <ul>
+                      <li><strong>Books has 4 people</strong> — shown.</li>
+                      <li><strong>AI has 3 people</strong> — shown.</li>
+                      <li><strong>Science has 2 people</strong> — hidden.</li>
+                    </ul>
+                    <p>
+                      Raise the minimum to <strong>5</strong>: the “16 November” card disappears
+                      because no discussion option in that card has 5 people. Totals include
+                      implicit participants marked with <strong>?</strong>.
+                    </p>
+                  </div>
+                  <p id="filterModes">
+                    <strong>Filter options</strong> — In the <strong>Filter by</strong> dropdown,
+                    choose <strong>Same as Group by</strong> to apply the minimum to each card’s
+                    total number of people. This option uses the poll selected under “Group by”.
+                    Choose a poll name to keep filtering that poll when “Group by” changes, or
+                    <strong>None</strong> to show every card and option.
+                  </p>
+                </div>
+              </section>
+            </section>
+          </div>
+          <div id="pollActions" class="actions">
+            <button
+              id="pollLinksToggle"
+              type="button"
+              class="text settings-toggle"
+              aria-expanded="true"
+              aria-controls="pollLinks"
+            >
+              <span class="settings-expand">Expand settings</span>
+              <span class="settings-collapse">Collapse settings</span>
+              <span class="settings-arrow" aria-hidden="true">▾</span>
+            </button>
+            <span class="hint" id="preferencesHint">
+              Links and view settings are saved in this browser.
+            </span>
+          </div>
+          <div class="poll-status" role="status" aria-live="polite">
+            <p id="status" class="status"></p>
+            <span id="demoLabel" class="demoLabel" hidden
+              >Demo · fictional participants and votes</span
+            >
+          </div>
         </section>
         <section class="results" aria-labelledby="resultHeading">
           <div class="resulthead">
@@ -70,84 +155,16 @@
             </div>
             <button id="export" disabled>Download CSV</button>
           </div>
-          <details id="viewHelp" class="view-help" open>
-            <summary id="viewHelpToggle">How grouping and filtering work</summary>
-            <div class="view-help-content">
-              <p id="groupByHint">
-                <strong>Group by</strong> — Each option in the poll selected under “Group by” gets
-                its own card. Inside, see the participants and their choices in the other polls.
-              </p>
-              <p id="filterByHint">
-                <strong>Filter by</strong> — Inside each card, count people for each option in the
-                poll selected under “Filter by”. Hide options below the minimum, and hide the card
-                if no option reaches it.
-              </p>
-              <div id="filterExample" class="help-example">
-                <p class="example-heading">
-                  <strong>For example —</strong>
-                  <button id="demoExample" type="button">Try the demo</button>
-                </p>
-                <p>
-                  Set <strong>Group by</strong> to “Which date?” and <strong>Filter by</strong> to
-                  “What shall we discuss?”, with a minimum of <strong>3</strong> people. In the
-                  <strong>“16 November”</strong> card:
-                </p>
-                <ul>
-                  <li><strong>Books has 4 people</strong> — shown.</li>
-                  <li><strong>AI has 3 people</strong> — shown.</li>
-                  <li><strong>Science has 2 people</strong> — hidden.</li>
-                </ul>
-                <p>
-                  Raise the minimum to <strong>5</strong>: the “16 November” card disappears because
-                  no discussion option in that card has 5 people. Totals include implicit
-                  participants marked with <strong>?</strong>.
-                </p>
-              </div>
-              <p id="filterModes">
-                <strong>Filter options</strong> — In the <strong>Filter by</strong> dropdown, choose
-                <strong>Same as Group by</strong> to apply the minimum to each card’s total number
-                of people. This option uses the poll selected under “Group by”. Choose a poll name
-                to keep filtering that poll when “Group by” changes, or <strong>None</strong> to
-                show every card and option.
-              </p>
-            </div>
-          </details>
-          <div class="view-controls" role="group" aria-label="Result settings">
-            <div>
-              <label for="groupBy">Group by</label>
-              <select id="groupBy" aria-describedby="groupByHint" disabled></select>
-            </div>
-            <div>
-              <label for="filterBy">Filter by</label>
-              <select id="filterBy" aria-describedby="filterByHint" disabled></select>
-            </div>
-            <div class="minimum-filter">
-              <label for="minimumParticipants">Minimum participants</label>
-              <input
-                id="minimumParticipants"
-                aria-describedby="minimumParticipantsHint"
-                type="number"
-                min="0"
-                step="1"
-                value="3"
-                inputmode="numeric"
-                disabled
-              />
-              <span id="minimumParticipantsHint" class="field-hint">
-                Counts explicit + implicit participants.
-              </span>
-            </div>
-          </div>
           <p class="vote-legend">
             3(+2?) means 3 explicit + 2 implicit participants. Dashed names are implicit for this
             row.
           </p>
-          <div id="demoLabel" class="demoLabel" hidden>Demo · fictional participants and votes</div>
           <div id="empty" class="empty">
             <strong>Where do the answers overlap?</strong>
             <p>
               Add links to the polls you want to compare. For consecutive messages, paste the first
-              link and add a row for each following poll. Refresh to load votes, or try the demo.
+              link and add a row for each following poll. Choose “Load polls” to load votes, or try
+              the demo.
             </p>
           </div>
           <div id="rows"></div>

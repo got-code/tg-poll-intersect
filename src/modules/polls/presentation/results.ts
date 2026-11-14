@@ -23,6 +23,7 @@ function participantExplanation(
 
 export function createResultsRenderer(container: HTMLElement) {
   const tooltip = createTooltip();
+  let cards = new Map<string, HTMLDetailsElement>();
   const formatTime = new Intl.DateTimeFormat('en-GB', {
     day: 'numeric',
     month: 'short',
@@ -81,11 +82,19 @@ export function createResultsRenderer(container: HTMLElement) {
     tooltip.hide();
     const titles = pollLabels(polls);
     const labels = new Map(polls.map((poll, index) => [poll.id, titles[index]]));
+    const previousCards = cards;
+    cards = new Map();
     container.replaceChildren();
     for (const group of groups) {
-      const card = element('section', 'group-card');
-      const heading = element('div', 'group-heading');
-      const stats = element('div', 'group-stats');
+      const card = element('details', 'group-card');
+      const key = JSON.stringify([group.pollId, group.option]);
+      card.open = previousCards.get(key)?.open ?? false;
+      cards.set(key, card);
+      card.addEventListener('toggle', () => {
+        if (!card.open) tooltip.hide();
+      });
+      const heading = element('summary', 'group-heading');
+      const stats = element('span', 'group-stats');
       stats.append(
         countNode(
           group.explicitIds.length,
@@ -95,10 +104,13 @@ export function createResultsRenderer(container: HTMLElement) {
           [labels.get(group.pollId)!],
         ),
       );
-      heading.append(element('h3', '', group.option), stats);
+      const arrow = element('span', 'group-arrow', '▾');
+      arrow.setAttribute('aria-hidden', 'true');
+      heading.append(element('h3', '', group.option), stats, arrow);
+      const body = element('div', 'group-body');
       const attendees = element('div', 'group-attendees');
       attendees.append(people(group.ids, names, group.implicitIds, group.votesByPerson, labels));
-      card.append(heading, attendees);
+      body.append(attendees);
       for (const section of group.sections) {
         const block = element('section', 'group-section');
         block.append(element('h4', '', labels.get(section.pollId)));
@@ -118,8 +130,9 @@ export function createResultsRenderer(container: HTMLElement) {
           );
           block.append(row);
         }
-        card.append(block);
+        body.append(block);
       }
+      card.append(heading, body);
       container.append(card);
     }
   };

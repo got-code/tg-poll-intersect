@@ -52,7 +52,7 @@ export function createPollResults({ source, demo }: { source: PollSource; demo: 
   function summarize(data: PollData, kind: PollResult['kind'], links: readonly PollLink[] = []) {
     validatePolls(data.polls);
     if (kind === 'live' && data.polls.length !== links.length)
-      throw new UserFacingError('Some polls are missing. Refresh the results again.');
+      throw new UserFacingError('Some polls are missing. Load the polls again.');
     return {
       polls: data.polls,
       names: data.names,

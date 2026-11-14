@@ -24,7 +24,7 @@ export async function readVoters(
       throw new UserFacingError('Telegram returned an invalid vote count.');
     count ??= page.count;
     if (count !== page.count)
-      throw new UserFacingError('Votes changed while loading. Refresh the results again.');
+      throw new UserFacingError('Votes changed while loading. Load the polls again.');
     for (const person of page.people) {
       ids.add(String(person.id));
       names[String(person.id)] = person.name;
@@ -41,13 +41,13 @@ export async function readVoters(
     if (!next) {
       if (ids.size !== count || (expected != null && expected !== count)) {
         throw new UserFacingError(
-          'The voter list is incomplete or votes changed. Refresh the results again.',
+          'The voter list is incomplete or votes changed. Load the polls again.',
         );
       }
       return { ids: [...ids], names, votedAt };
     }
     if (offsets.has(next))
-      throw new UserFacingError('Telegram repeated a voter page. Try refreshing later.');
+      throw new UserFacingError('Telegram repeated a voter page. Try loading the polls later.');
     offsets.add(next);
     offset = next;
   }
